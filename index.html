@@ -1,0 +1,2187 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Astralkompass-Akademie // Sternenhof</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.2.js"></script>
+<style>
+:root{
+  --c:#e0b84c;--m:#3aa0c4;--g:#3ecf6e;--r:#d1495b;
+  --dark:#0a1020;--card:rgba(14,18,32,0.94);
+  --fd:'Cinzel',serif;--fm:'EB Garamond',serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--dark);color:var(--c);font-family:var(--fm);overflow:hidden;height:100vh;width:100vw;user-select:none}
+body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.05) 2px,rgba(0,0,0,0.05) 4px);pointer-events:none;z-index:9000}
+
+/* JOIN */
+#join-overlay{position:fixed;inset:0;background:radial-gradient(ellipse at center,#0d1830,#05070f);display:flex;align-items:center;justify-content:center;z-index:8000}
+.jbox{width:440px;border:1px solid rgba(224,184,76,0.4);background:var(--card);padding:44px 40px;position:relative;box-shadow:0 0 60px rgba(224,184,76,0.08)}
+.jbox::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--c),transparent)}
+.jlogo{text-align:center;margin-bottom:36px}
+.jlogo-t{font-family:var(--fd);font-size:22px;font-weight:900;letter-spacing:5px;color:var(--c);text-shadow:0 0 30px var(--c)}
+.jlogo-t2{font-family:var(--fd);font-size:13px;font-weight:700;letter-spacing:9px;color:var(--m);margin-top:4px;text-transform:uppercase}
+.jlogo-s{font-size:11px;letter-spacing:3px;color:rgba(224,184,76,0.35);margin-top:10px;text-transform:uppercase}
+.fg{margin-bottom:16px}
+.fl{display:block;font-size:9px;letter-spacing:3px;color:rgba(224,184,76,0.5);margin-bottom:6px;text-transform:uppercase}
+.fi{width:100%;background:rgba(0,0,0,0.35);border:1px solid rgba(224,184,76,0.22);color:var(--c);font-family:var(--fm);font-size:15px;padding:10px 14px;outline:none;transition:border-color .2s,box-shadow .2s}
+.fi:focus{border-color:rgba(224,184,76,.7);box-shadow:0 0 10px rgba(224,184,76,.15)}
+.fi::placeholder{color:rgba(224,184,76,.22)}
+.fh{font-size:9px;letter-spacing:1px;color:rgba(224,184,76,.28);margin-top:4px}
+.dm-row{display:flex;align-items:center;gap:14px;margin:22px 0;cursor:pointer}
+.dm-row input{display:none}
+.tpill{width:44px;height:22px;background:rgba(0,0,0,.5);border:1px solid rgba(58,160,196,.35);border-radius:11px;position:relative;transition:all .25s;flex-shrink:0}
+.tpill::after{content:'';position:absolute;width:15px;height:15px;background:rgba(58,160,196,.4);border-radius:50%;top:3px;left:3px;transition:all .25s}
+#f-isdm:checked~.tpill{border-color:var(--m);box-shadow:0 0 10px rgba(58,160,196,.45)}
+#f-isdm:checked~.tpill::after{left:24px;background:var(--m)}
+.dlabel{font-size:11px;letter-spacing:2px;color:rgba(58,160,196,.75);text-transform:uppercase}
+#jerr{font-size:11px;letter-spacing:1px;color:var(--r);min-height:18px;margin-bottom:12px;text-align:center}
+.jbtn{width:100%;background:transparent;border:1px solid var(--c);color:var(--c);font-family:var(--fd);font-size:12px;font-weight:700;letter-spacing:5px;padding:15px;cursor:pointer;text-transform:uppercase;transition:all .2s}
+.jbtn:hover{background:rgba(224,184,76,.08);box-shadow:0 0 20px rgba(224,184,76,.18)}
+.jbtn:disabled{opacity:.5;cursor:not-allowed}
+
+/* CROSSHAIR */
+#crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:500;opacity:0;transition:opacity .3s}
+#crosshair::before,#crosshair::after{content:'';position:absolute;background:rgba(224,184,76,0.6)}
+#crosshair::before{width:12px;height:1px;top:0;left:50%;transform:translateX(-50%)}
+#crosshair::after{width:1px;height:12px;left:0;top:50%;transform:translateY(-50%)}
+body.locked #crosshair{opacity:1}
+
+/* HUD */
+#hud{position:fixed;top:0;left:0;right:0;padding:18px 24px;display:flex;justify-content:space-between;align-items:flex-start;z-index:200;pointer-events:none;background:linear-gradient(to bottom,rgba(0,0,0,.65),transparent)}
+.hud-title{font-family:var(--fd);font-size:15px;font-weight:900;letter-spacing:5px;color:var(--c);text-shadow:0 0 15px var(--c)}
+.hud-room{font-size:9px;letter-spacing:3px;color:rgba(224,184,76,.4);margin-top:3px}
+.hud-hint{text-align:right;font-size:9px;letter-spacing:2px;color:rgba(224,184,76,.3);line-height:1.9}
+
+/* CONTROLS */
+#ctrl{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:rgba(2,4,12,.95);border:1px solid rgba(224,184,76,.2);padding:10px 16px;z-index:200;backdrop-filter:blur(10px)}
+.cb{background:transparent;border:1px solid rgba(224,184,76,.25);color:rgba(224,184,76,.75);font-family:var(--fm);font-size:12px;letter-spacing:1px;padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .15s;text-transform:uppercase;pointer-events:auto}
+.cb:hover{background:rgba(224,184,76,.1);border-color:var(--c);color:var(--c)}
+.cb.off{border-color:rgba(209,73,91,.4);color:rgba(209,73,91,.7)}
+.cb.dm{border-color:rgba(58,160,196,.35);color:rgba(58,160,196,.75)}
+.cb.dm:hover{background:rgba(58,160,196,.1);border-color:var(--m);color:var(--m)}
+.cb.str{border-color:var(--g);color:var(--g);box-shadow:0 0 10px rgba(62,207,110,.25)}
+.cb-sep{width:1px;height:26px;background:rgba(224,184,76,.12);margin:0 2px}
+
+/* VOLUME PANEL */
+#vol-panel{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);width:260px;background:rgba(2,4,12,.97);border:1px solid rgba(224,184,76,.28);z-index:200;backdrop-filter:blur(10px);max-height:280px;overflow-y:auto}
+.vol-head{padding:10px 14px;font-family:var(--fd);font-size:9px;font-weight:700;letter-spacing:3px;color:rgba(224,184,76,.85);border-bottom:1px solid rgba(224,184,76,.12);text-transform:uppercase}
+.vol-row{padding:8px 14px;border-bottom:1px solid rgba(224,184,76,.08)}
+.vol-row:last-child{border-bottom:none}
+.vol-label{font-size:10px;letter-spacing:1px;color:rgba(224,184,76,.7);margin-bottom:4px;text-transform:uppercase;display:flex;justify-content:space-between}
+.vol-row input[type=range]{width:100%;accent-color:#e0b84c}
+.vol-empty{padding:14px;font-size:10px;color:rgba(224,184,76,.4);text-align:center}
+
+/* DM PANEL */
+#gm{position:fixed;right:24px;top:70px;width:270px;background:rgba(8,14,22,.97);border:1px solid rgba(58,160,196,.28);z-index:200;backdrop-filter:blur(10px)}
+#gm::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--m),transparent)}
+.gm-head{padding:12px 16px;font-family:var(--fd);font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(58,160,196,.85);border-bottom:1px solid rgba(58,160,196,.12);text-transform:uppercase}
+.gm-sec{padding:12px 16px;border-bottom:1px solid rgba(58,160,196,.08)}
+.gm-sec:last-child{border-bottom:none}
+.gstt{font-size:8px;letter-spacing:3px;color:rgba(58,160,196,.45);text-transform:uppercase;margin-bottom:9px}
+.pi{width:100%;background:rgba(0,0,0,.45);border:1px solid rgba(58,160,196,.2);color:rgba(58,160,196,.85);font-family:var(--fm);font-size:12px;padding:7px 10px;outline:none;transition:border-color .2s;margin-bottom:7px}
+.pi:focus{border-color:rgba(58,160,196,.55)}
+.pi::placeholder{color:rgba(58,160,196,.25)}
+.pb{width:100%;background:transparent;border:1px solid rgba(58,160,196,.28);color:rgba(58,160,196,.7);font-family:var(--fm);font-size:11px;letter-spacing:2px;padding:7px;cursor:pointer;transition:all .15s;text-transform:uppercase;margin-bottom:5px}
+.pb:hover{background:rgba(58,160,196,.1);border-color:var(--m);color:var(--m)}
+.pb.active{border-color:var(--r);color:var(--r);box-shadow:0 0 10px rgba(209,73,91,.3)}
+.pb.active:hover{background:rgba(209,73,91,.1);border-color:var(--r);color:var(--r)}
+.mstat{font-size:9px;letter-spacing:1px;color:rgba(58,160,196,.45);text-align:center;padding:6px 0 2px}
+.mstat.on{color:var(--g)}
+.recent-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px}
+.recent-thumb{width:36px;height:36px;object-fit:cover;border:1px solid rgba(58,160,196,.3);cursor:pointer;transition:border-color .15s,transform .15s}
+.recent-thumb:hover{border-color:var(--m);transform:scale(1.08)}
+.ifw{margin-top:8px}
+.ifw iframe{width:100%;border:1px solid rgba(58,160,196,.15)}
+
+/* LOCK PROMPT */
+#lock-prompt{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;opacity:0;pointer-events:none;transition:opacity .4s}
+#lock-prompt.vis{opacity:1;}
+.lp{text-align:center;background:rgba(2,4,14,.92);border:1px solid rgba(224,184,76,.35);padding:36px 50px;pointer-events:auto;cursor:pointer}
+.lp:hover{box-shadow:0 0 20px rgba(224,184,76,.25)}
+.lp h2{font-family:var(--fd);font-size:18px;letter-spacing:4px;color:var(--c);text-shadow:0 0 20px var(--c);margin-bottom:10px}
+.lp p{font-size:11px;letter-spacing:2px;color:rgba(224,184,76,.5);line-height:1.9;text-transform:uppercase}
+
+/* PROX */
+#prox{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:3px;color:rgba(224,184,76,.55);z-index:200;pointer-events:none;text-transform:uppercase;opacity:0;transition:opacity .5s;white-space:nowrap}
+#prox.show{opacity:1}
+
+/* FOCUS VIEW */
+#focus-overlay{position:fixed;left:24px;bottom:110px;width:340px;background:#000;border:1px solid rgba(224,184,76,.4);box-shadow:0 8px 30px rgba(0,0,0,.6);z-index:210;pointer-events:none}
+#focus-video{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#111}
+#focus-label{position:absolute;top:8px;left:8px;background:rgba(2,4,12,.75);color:#e0b84c;font-family:var(--fm);font-size:10px;letter-spacing:2px;text-transform:uppercase;padding:4px 8px}
+.focus-hint{position:absolute;bottom:8px;right:8px;background:rgba(2,4,12,.75);color:rgba(224,184,76,.7);font-family:var(--fm);font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:4px 8px}
+
+canvas{display:block}
+</style>
+</head>
+<body>
+
+<div id="join-overlay">
+  <div class="jbox">
+    <div class="jlogo">
+      <div class="jlogo-t">ASTRALKOMPASS</div>
+      <div class="jlogo-t2">Akademie</div>
+      <div class="jlogo-s">Sternenhof · Arkane Verbindung</div>
+    </div>
+    <div class="fg">
+      <label class="fl" for="f-appid">Agora App-ID</label>
+      <input class="fi" id="f-appid" type="text" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false"/>
+      <div class="fh">Kostenlos: agora.io → Neues Projekt → Testing-Mode → App ID kopieren</div>
+    </div>
+    <div class="fg">
+      <label class="fl" for="f-room">Raum-Code</label>
+      <input class="fi" id="f-room" type="text" placeholder="sternenhof-sitzung-01" autocomplete="off"/>
+      <div class="fh">Alle Spieler müssen denselben Code eingeben</div>
+    </div>
+    <div class="fg">
+      <label class="fl" for="f-token">Token (nur falls Projekt ein Zertifikat hat)</label>
+      <input class="fi" id="f-token" type="text" placeholder="optional" autocomplete="off" spellcheck="false"/>
+      <div class="fh">Agora-Konsole → Projekt → "Generate Temp Token" (mit UID 0, für diesen Raum-Code). Leer lassen, wenn das Projekt kein Zertifikat hat.</div>
+    </div>
+    <label class="dm-row">
+      <input type="checkbox" id="f-isdm"/>
+      <span class="tpill"></span>
+      <span class="dlabel">DM-Zugang</span>
+    </label>
+    <div id="jerr">&nbsp;</div>
+    <button class="jbtn" id="join-btn">▶ VERBINDEN</button>
+  </div>
+</div>
+
+<canvas id="c"></canvas>
+<div id="crosshair"></div>
+
+<div id="lock-prompt" class="vis">
+  <div class="lp">
+    <h2>KLICKEN ZUM EINTRETEN</h2>
+    <p>WASD &nbsp;·&nbsp; Bewegen<br>MAUS &nbsp;·&nbsp; Umsehen<br>ESC &nbsp;·&nbsp; Maus freigeben</p>
+  </div>
+</div>
+
+<div id="hud" style="display:none">
+  <div>
+    <div class="hud-title">STERNENHOF</div>
+    <div class="hud-room" id="hud-room">RAUM: —</div>
+  </div>
+  <div class="hud-hint">WASD Bewegen &nbsp;·&nbsp; Maus Umsehen &nbsp;·&nbsp; ESC Freigeben</div>
+</div>
+
+<div id="ctrl" style="display:none">
+  <button class="cb" id="btn-mic">🎤 <span>Mic</span></button>
+  <button class="cb" id="btn-cam">📷 <span>Kamera</span></button>
+  <button class="cb" id="btn-audiomode" title="Zwischen räumlichem Klang und gleicher Lautstärke für alle wechseln">🎧 <span>Räumlich</span></button>
+  <button class="cb" id="btn-tactical" title="Taktische Draufsicht auf den Kampftisch">🗺 <span>Taktische Ansicht</span></button>
+  <button class="cb" id="btn-vol" title="Lautstärke einzelner Personen anpassen">🔊 <span>Lautstärke</span></button>
+  <div class="cb-sep"></div>
+  <button class="cb dm" id="btn-music" style="display:none">🎵 <span>Musik</span></button>
+  <div class="cb-sep" id="sep-dm" style="display:none"></div>
+  <button class="cb off" id="btn-leave">✕ <span>Verlassen</span></button>
+</div>
+
+<div id="vol-panel" style="display:none">
+  <div class="vol-head">🔊 Lautstärke</div>
+  <div id="vol-list"></div>
+</div>
+
+<div id="gm" style="display:none">
+  <div class="gm-head">🧭 DM-Pult</div>
+  <div class="gm-sec">
+    <div class="gstt">Spieler-Steuerung</div>
+    <button class="pb" id="mute-all-btn" title="Hotkey: M">🔇 Alle stummschalten</button>
+    <div class="mstat">Hotkey: M</div>
+  </div>
+  <div class="gm-sec">
+    <div class="gstt">Tabletopaudio</div>
+    <input class="pi" id="tta-url" type="text" placeholder="https://tabletopaudio.com/..."/>
+    <button class="pb" id="tta-btn">► Laden</button>
+    <div id="tta-wrap" class="ifw" style="display:none"><iframe id="tta-frame" height="170"></iframe></div>
+  </div>
+  <div class="gm-sec">
+    <div class="gstt">Spotify</div>
+    <input class="pi" id="sp-url" type="text" placeholder="open.spotify.com/playlist/…"/>
+    <button class="pb" id="sp-btn">► Laden</button>
+    <div id="sp-wrap" class="ifw" style="display:none"><iframe id="sp-frame" height="152" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe></div>
+  </div>
+  <div class="gm-sec">
+    <div class="gstt">Musik an alle senden</div>
+    <button class="pb" id="share-btn">🔊 Tab-Audio streamen</button>
+    <div class="mstat" id="mstat">Inaktiv — Tab im Browser auswählen</div>
+  </div>
+  <div class="gm-sec">
+    <div class="gstt">Kampfkarte</div>
+    <div class="recent-row" id="map-recent"></div>
+    <input type="file" id="map-file" accept="image/*" style="display:none"/>
+    <button class="pb" id="map-upload-btn">🗺 Karte hochladen</button>
+    <button class="pb" id="map-clear-btn" style="display:none">✕ Karte entfernen</button>
+    <div class="mstat" id="map-stat">Keine Karte aktiv</div>
+  </div>
+  <div class="gm-sec">
+    <div class="gstt">Token</div>
+    <select class="pi" id="token-category">
+      <option value="player">Spieler (Teal)</option>
+      <option value="ally">Verbündeter (Grün)</option>
+      <option value="companion">Begleiter (Orange)</option>
+      <option value="enemy" selected>Gegner (Rot)</option>
+    </select>
+    <select class="pi" id="token-size">
+      <option value="small">Klein</option>
+      <option value="medium" selected>Mittel</option>
+      <option value="large">Groß</option>
+    </select>
+    <div class="recent-row" id="token-recent"></div>
+    <input type="file" id="token-file" accept="image/*" style="display:none"/>
+    <button class="pb" id="token-add-btn" title="F: aufnehmen/ablegen · X: entfernen (während gehalten)">➕ Token hinzufügen</button>
+    <div class="mstat">F: aufnehmen/ablegen · X: entfernen</div>
+  </div>
+</div>
+
+<div id="prox"></div>
+
+<div id="focus-overlay" style="display:none">
+  <video id="focus-video" autoplay muted playsinline></video>
+  <div id="focus-label"></div>
+  <div class="focus-hint">F zum Schließen</div>
+</div>
+
+<script>
+'use strict';
+
+// ══════════ CONSTANTS ══════════
+const MOVE_SPEED   = 3.2;
+const EYE_H        = 1.6;
+const OCT_HW       = 4.0;   // half-width of the square before chamfering
+const OCT_CH       = 1.5;   // chamfer cut size
+const OCT_A        = OCT_HW - OCT_CH; // half-length of the main walls
+const WALL_H       = 3.1;   // wall height, marble+wood, before the dome
+const DOME_R       = 4.8;   // dome hemisphere radius
+const PROX_DIST    = 3.0;
+const POS_MS       = 80;
+const TABLE_TL      = 3.0;  // table length (head-to-foot)
+const TABLE_TW      = 1.3;  // table width (long-side to long-side)
+const SECRET_CORR_W = 1.25; // secret-room corridor width
+const SECRET_CORR_L = 4.8;  // secret-room corridor length — kept long so spatial
+                             // audio (inverse falloff, not a hard cutoff) has
+                             // enough real distance to fade whispers out
+const SECRET_ROOM_W = 2.5;  // secret-room width
+const SECRET_ROOM_D = 2.5;  // secret-room depth
+
+// ══════════ PALETTE ══════════
+const GOLD   = 0xe0b84c; // gilt trim, primary accent
+const TEAL   = 0x3aa0c4; // astral blue, DM accent
+const EMERALD= 0x3ecf6e; // active/streaming
+const EMBER  = 0xd1495b; // warning
+const AMBER  = 0xe0a458; // candle, lantern & hearth glow
+const ORANGE = 0xe8823c; // companion tokens
+const WOOD   = 0x5a3d22; // warm oak
+const WOOD_DARK=0x3b2717; // dark walnut
+const WOOD_CREAM=0xd8c39c; // cream wainscot panelling
+const STONE  = 0xcabf9e; // pale marble floor / table
+const STONE_WALL=0xf0e6d2; // cream marble wall
+const STONE_TRIM=0xc9b98a; // gold-grey molding
+const STONE_BLUE=0x3d5670; // fireplace stone
+
+// ══════════ THREE STATE ══════════
+let renderer, scene, camera, clock;
+let particleMesh, emberMesh, starSphere;
+let cLight, mLight, hearthLight;
+let doorWallInfo; // NE-chamfer doorway to the secret room — used for the movement passage
+let tacticalView = false; // fixed bird's-eye camera over the table, for precise token placement
+
+// ══════════ SHOOTING STARS ══════════
+// DM-client-authoritative timer (broadcasts a bare trigger event, no
+// payload) so everyone sees one at the same real moment — each client then
+// renders its own randomized streak locally rather than syncing exact
+// position, which would need far more network traffic for no visible gain.
+const shootingStars = [];
+let nextShootingStarAt = null;
+
+// ══════════ COMBAT MAP ══════════
+// Unsigned Cloudinary upload preset — cloud name and preset name are public
+// identifiers, not secrets; access control lives in the preset's own
+// restrictions (image-only, size cap), not in hiding these.
+const CLOUDINARY_CLOUD = 'su0cgmgw';
+const CLOUDINARY_PRESET = 'fantasy-room';
+let battleMapMesh = null, defaultMapTexture = null, currentMapUrl = null;
+
+// ══════════ TOKENS ══════════
+const TOKEN_RADIUS = 0.055;
+const tokens = {}; // id -> {grp, disc, u, v, owner, lastBroadcast}
+let heldTokenId = null;
+const tokenRaycaster = new THREE.Raycaster();
+
+// ══════════ FOCUS VIEW ══════════
+// Look at someone (their video plane) and press F to pop their feed into a
+// larger 2D overlay on your own screen — purely client-side, reuses the
+// same <video> element already streaming their track into the 3D texture.
+// Fixes "can't see the person across the table clearly" without resizing
+// anyone's avatar, which would look wrong for whoever else is looking at
+// that same shared 3D object from a different distance.
+let focusedUid = null;
+
+// player
+const playerPos = new THREE.Vector3(0, EYE_H, 3.2);
+let   yaw = Math.PI, pitch = -0.05;
+const keys = {};
+let   isLocked = false;
+let   velY = 0;
+const GRAVITY = -18;
+const JUMP_FORCE = 6;
+
+// ══════════ AGORA STATE ══════════
+// Shared music is published from a SEPARATE Agora client with uid
+// localUID + MUSIC_UID_OFFSET, joined to the same room. Agora's remote-user
+// model only exposes one audioTrack reference per uid, so trying to publish
+// mic and screen-audio on the SAME uid and later guess which is which on
+// the receiving end is fundamentally unreliable, not just an ordering race.
+// A dedicated uid sidesteps the ambiguity entirely: any audio track from a
+// uid >= MUSIC_UID_OFFSET is unambiguously music, always ambient; any real
+// player uid (always < MUSIC_UID_OFFSET, see localUID's generation below)
+// only ever has one audio track — their mic — always spatial.
+const MUSIC_UID_OFFSET = 1000000;
+let agoraClient = null, musicClient = null, localAudio = null, localVideo = null, screenAudio = null;
+let localUID = null, localName = '', isDM = false;
+let joinedAppId = null, joinedRoom = null, joinedToken = null;
+let micMuted = false, camOff = false, streaming = false;
+let forceMuted = false, preForceMuteState = false; // players: muted by the DM, cannot self-unmute
+let allMuted = false; // DM: current broadcast mute-all state
+const users = {};
+let audioCtx = null;
+let musicGain = null, musicUid = null; // ambient music's own isolation gain node
+let spatialMode = true; // per-listener preference: true = positional 3D audio, false = flat, same volume for everyone
+
+// ══════════ POINTER LOCK ══════════
+const canvas = document.getElementById('c');
+
+document.querySelector('#lock-prompt .lp').addEventListener('click', () => canvas.requestPointerLock());
+
+document.addEventListener('pointerlockchange', () => {
+  isLocked = document.pointerLockElement === canvas;
+  document.body.classList.toggle('locked', isLocked);
+  document.getElementById('lock-prompt').classList.toggle('vis', !isLocked);
+});
+
+document.addEventListener('mousemove', e => {
+  if (!isLocked || tacticalView) return; // frozen look direction while in the fixed tactical view, so toggling back doesn't snap to wherever the mouse silently drifted
+  yaw   -= e.movementX * 0.0018;
+  pitch -= e.movementY * 0.0018;
+  pitch  = Math.max(-1.2, Math.min(1.2, pitch));
+});
+
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space' && isLocked && playerPos.y <= EYE_H + 0.05) {
+    velY = JUMP_FORCE;
+    e.preventDefault();
+  }
+  // Token pickup/drop/remove. The DM can move any token; a player can only
+  // move "player"-category tokens (their own character), not ally/enemy
+  // ones — there's no per-player identity system in this app (no accounts,
+  // no names), so this is category-based rather than assigned to one
+  // specific player, but it still keeps players from repositioning the
+  // DM's monsters. Crosshair-based rather than a free mouse cursor, since
+  // the room stays pointer-locked during normal play — matches the
+  // existing WASD/mouse-look paradigm instead of a separate cursor mode.
+  if (e.code === 'KeyF' && isLocked && battleMapMesh) {
+    if (heldTokenId) {
+      tokenRaycaster.setFromCamera({x:0,y:0}, camera);
+      const hit = tokenRaycaster.intersectObject(battleMapMesh)[0];
+      if (hit) moveToken(heldTokenId, hit.uv.x, hit.uv.y, true, true);
+      heldTokenId = null;
+    } else {
+      tokenRaycaster.setFromCamera({x:0,y:0}, camera);
+      const meshes = Object.values(tokens).map(t=>t.disc);
+      const hit = tokenRaycaster.intersectObjects(meshes)[0];
+      if (hit) {
+        const id = hit.object.userData.tokenId;
+        const canMove = isDM || tokens[id]?.category==='player';
+        if (canMove) heldTokenId = id;
+      } else if (focusedUid) {
+        // Already focused on someone — F closes it regardless of where
+        // you're currently looking, so you don't have to re-aim at their
+        // face just to dismiss it.
+        setFocus(null);
+      } else {
+        // Nothing else under the crosshair — check for a person's face
+        // instead, for the close-up focus view (available to everyone,
+        // not DM-only, unlike token pickup permissions above).
+        const avatarMeshes = Object.values(users).filter(u=>!u.isLocal && u.vidMesh).map(u=>u.vidMesh);
+        const avatarHit = tokenRaycaster.intersectObjects(avatarMeshes)[0];
+        if (avatarHit) setFocus(avatarHit.object.userData.uid);
+      }
+    }
+  }
+  if (e.code === 'KeyX' && isLocked && isDM && heldTokenId) {
+    removeToken(heldTokenId, true);
+    heldTokenId = null;
+  }
+  // DM mute-all hotkey — just clicks the real button so there's only ever
+  // one place that owns the toggle logic.
+  if (e.code === 'KeyM' && isLocked && isDM) {
+    document.getElementById('mute-all-btn').click();
+  }
+});
+document.addEventListener('keyup',   e => { keys[e.code] = false; });
+
+// ══════════ SCENE INIT ══════════
+function initScene() {
+  clock = new THREE.Clock();
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+
+  scene  = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0b1220, 5, 15);
+  scene.background = new THREE.Color(0x0b1220);
+
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 40);
+
+  // lights — warm, indirect, kept low so the small marble room never blows out
+  scene.add(new THREE.AmbientLight(0x151109, 0.6));
+
+  cLight = new THREE.PointLight(GOLD, 1.3, 9); cLight.position.set(0,2.7,0.3); cLight.castShadow=true; scene.add(cLight);
+  mLight = new THREE.PointLight(TEAL, 0.55, 9); mLight.position.set(0,WALL_H+1.2,0); scene.add(mLight);
+
+  doorWallInfo = octWallDefs()[1]; // NE chamfer — the secret-room doorway
+  buildRoom();
+  buildFurniture();
+  buildParticles();
+  window.addEventListener('resize', onResize);
+  animate();
+}
+
+// ══════════ GEOMETRY HELPERS ══════════
+function mat(color, emissive=0x000000, emI=0, rough=0.95, metal=0, side=THREE.FrontSide) {
+  return new THREE.MeshStandardMaterial({color, emissive, emissiveIntensity:emI, roughness:rough, metalness:metal, side});
+}
+
+function octVerts() {
+  const a = OCT_A;
+  return [
+    [-a,-OCT_HW],[a,-OCT_HW],           // N wall ends
+    [OCT_HW,-a],[OCT_HW,a],             // E wall ends
+    [a,OCT_HW],[-a,OCT_HW],             // S wall ends
+    [-OCT_HW,a],[-OCT_HW,-a],           // W wall ends
+  ];
+}
+
+function octWallDefs() {
+  const verts = octVerts();
+  return verts.map((A,i)=>{
+    const B = verts[(i+1)%8];
+    const width = Math.hypot(B[0]-A[0], B[1]-A[1]);
+    const mid = [(A[0]+B[0])/2, (A[1]+B[1])/2];
+    const ry = Math.atan2(-mid[0], -mid[1]);
+    return { mid, width, ry, isMain: i%2===0, index:i };
+  });
+}
+
+function ribBetween(p1,p2,radius,color) {
+  const dir=new THREE.Vector3().subVectors(p2,p1);
+  const len=dir.length();
+  const rib=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius*1.5,len,6),mat(color,color,1.3,0));
+  rib.position.copy(p1).addScaledVector(dir,0.5);
+  rib.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+  scene.add(rib);
+}
+
+// addScreen(x, y, z, rotY, panelW, panelH, drawFn) — a framed, canvas-textured wall panel
+function addScreen(x, y, z, ry, sw, sh, drawFn) {
+  const c=document.createElement('canvas');
+  c.width=Math.round(sw*140); c.height=Math.round(sh*140);
+  drawFn(c.getContext('2d'), c.width, c.height);
+
+  const frame=new THREE.Mesh(
+    new THREE.BoxGeometry(sw+0.14, sh+0.14, 0.06),
+    mat(WOOD_DARK,0,0,0.5,0.08));
+  frame.position.set(x,y,z); frame.rotation.y=ry; scene.add(frame);
+
+  [[sh/2+0.08],[-(sh/2+0.08)]].forEach(([dy])=>{
+    const e=new THREE.Mesh(new THREE.BoxGeometry(sw+0.16,0.03,0.08),mat(GOLD,GOLD,1.6));
+    e.position.set(x,y+dy,z); e.rotation.y=ry; scene.add(e);
+  });
+
+  const offset = new THREE.Vector3(0,0,0.05).applyEuler(new THREE.Euler(0,ry,0));
+  const screen=new THREE.Mesh(
+    new THREE.PlaneGeometry(sw,sh),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c), side:THREE.DoubleSide}));
+  screen.position.set(x+offset.x, y, z+offset.z);
+  screen.rotation.y=ry; scene.add(screen);
+}
+
+function drawCompassRose(ctx,cx,cy,r,color) {
+  ctx.save();
+  ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,r*0.7,0,Math.PI*2); ctx.stroke();
+  for(let a=0;a<360;a+=30){
+    const rad=a*Math.PI/180;
+    const len = a%90===0 ? r*1.08 : r*0.85;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.lineTo(cx+Math.cos(rad)*len, cy+Math.sin(rad)*len);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ══════════ ROOM ══════════
+function buildRoom() {
+  // floor — sized generously; the octagon walls define the visible boundary
+  const fl=new THREE.Mesh(new THREE.PlaneGeometry(OCT_HW*2+0.4, OCT_HW*2+0.4),
+    mat(STONE,0x000000,0,0.6,0.02));
+  fl.rotation.x=-Math.PI/2; fl.receiveShadow=true; scene.add(fl);
+  const g1=new THREE.GridHelper(OCT_HW*2,16,STONE_TRIM,0xB5A06C); g1.position.y=-0.01; scene.add(g1);
+
+  // walls — cream wood wainscot in the lower third, marble above, gilt seam & baseboard.
+  // Skip the doorway wall (index 1) entirely — buildSecretWing() builds its own
+  // jamb+lintel there. Leaving this full panel in place used to overlap it
+  // almost exactly, causing z-fighting / one-sided visibility gaps at a distance.
+  octWallDefs().forEach(w=>{
+    if(w.index===1) return;
+    const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+    const lower=new THREE.Mesh(new THREE.PlaneGeometry(w.width-0.05, WALL_H/3), mat(WOOD_CREAM,0,0,0.6,0.03));
+    lower.position.set(w.mid[0],WALL_H/6,w.mid[1]); lower.rotation.y=w.ry; lower.receiveShadow=true; scene.add(lower);
+
+    const upper=new THREE.Mesh(new THREE.PlaneGeometry(w.width-0.05, WALL_H*2/3), mat(STONE_WALL,0x000000,0,0.6,0.02));
+    upper.position.set(w.mid[0],WALL_H*2/3,w.mid[1]); upper.rotation.y=w.ry; upper.receiveShadow=true; scene.add(upper);
+
+    const seam=new THREE.Mesh(new THREE.BoxGeometry(w.width-0.03,0.035,0.03),mat(GOLD,GOLD,1.4,0));
+    seam.position.set(w.mid[0]+nx*0.02,WALL_H/3,w.mid[1]+nz*0.02); seam.rotation.y=w.ry; scene.add(seam);
+
+    const base=new THREE.Mesh(new THREE.BoxGeometry(w.width-0.03,0.06,0.03),mat(GOLD,GOLD,1.4,0));
+    base.position.set(w.mid[0]+nx*0.02,0.04,w.mid[1]+nz*0.02); base.rotation.y=w.ry; scene.add(base);
+  });
+
+  buildDome();
+  buildFocusWall();
+  buildLibraryWall();
+  buildFireplace(-OCT_HW+0.03, 0, Math.PI/2);
+  buildMapWall();
+  buildPortraits();
+}
+
+function buildDome() {
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(DOME_R*0.985,0.035,8,32),mat(GOLD,GOLD,1.4,0));
+  ring.rotation.x=Math.PI/2; ring.position.y=WALL_H; scene.add(ring);
+
+  const apex=new THREE.Vector3(0,WALL_H+DOME_R,0);
+  octVerts().forEach(([x,z])=>{
+    const s=DOME_R/Math.hypot(x,z);
+    ribBetween(apex, new THREE.Vector3(x*s,WALL_H,z*s), 0.032, GOLD);
+  });
+
+  const med=new THREE.Mesh(new THREE.TorusGeometry(0.16,0.026,8,20),mat(GOLD,GOLD,1.8));
+  med.position.copy(apex); scene.add(med);
+  const medDot=new THREE.Mesh(new THREE.SphereGeometry(0.05,10,10),mat(GOLD,GOLD,2.2));
+  medDot.position.copy(apex); scene.add(medDot);
+
+  // the rotating night sky — a slow, low-fatigue timekeeper for long sessions.
+  // Flat gradient backdrop + stars as real GPU point sprites (not baked into
+  // the backdrop texture), so they stay crisp up close instead of blurring
+  // out from magnifying a small bitmap over a dome this near the player.
+  starSphere=new THREE.Group();
+  starSphere.position.y=WALL_H;
+
+  const bgc=document.createElement('canvas'); bgc.width=4; bgc.height=512;
+  const bgctx=bgc.getContext('2d');
+  const grad=bgctx.createLinearGradient(0,0,0,512);
+  grad.addColorStop(0,'#0c1c38'); grad.addColorStop(1,'#182c4e');
+  bgctx.fillStyle=grad; bgctx.fillRect(0,0,4,512);
+  const skyMesh=new THREE.Mesh(
+    new THREE.SphereGeometry(DOME_R*0.985,32,16,0,Math.PI*2,0,Math.PI/2),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(bgc), side:THREE.BackSide})
+  );
+  starSphere.add(skyMesh);
+
+  function starLayer(count,size,opacity,bright) {
+    const pos=new Float32Array(count*3), col=new Float32Array(count*3);
+    const r=DOME_R*0.98;
+    for(let i=0;i<count;i++){
+      // Uniform sampling over the hemisphere cap (not theta directly), so
+      // stars don't bunch up near the zenith.
+      const cosT=1-Math.random(), sinT=Math.sqrt(1-cosT*cosT), phi=Math.random()*Math.PI*2;
+      pos[i*3]  = r*sinT*Math.cos(phi);
+      pos[i*3+1]= r*cosT;
+      pos[i*3+2]= r*sinT*Math.sin(phi);
+      const b=bright*(0.6+Math.random()*0.4);
+      col[i*3]=b; col[i*3+1]=b*0.94; col[i*3+2]=b*0.82;
+    }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    return new THREE.Points(g,new THREE.PointsMaterial({
+      size, sizeAttenuation:false, vertexColors:true,
+      transparent:true, opacity, depthWrite:false, blending:THREE.AdditiveBlending
+    }));
+  }
+  starSphere.add(starLayer(1800,1.4,0.85,0.55)); // bulk of faint, small stars
+  starSphere.add(starLayer(140,2.6,0.95,1.0));   // a few brighter standouts
+
+  scene.add(starSphere);
+}
+
+// A brief meteor streak — same GPU point-sprite technique as the main star
+// field (sizeAttenuation off, additive blending), not a stretched texture,
+// so it stays exactly as crisp as the stars themselves regardless of
+// distance. A short trail of points is built once at the true world
+// position, then the whole Points object is translated rigidly each frame
+// — cheaper than rewriting the trail's geometry every frame for a shape
+// that never actually changes, only moves.
+function spawnShootingStar() {
+  if (!starSphere) return;
+  const r = DOME_R*0.97;
+  const cosT = 1 - Math.random()*0.55; // bias toward the upper dome, away from the horizon where it'd be less visible
+  const sinT = Math.sqrt(1-cosT*cosT);
+  const phi = Math.random()*Math.PI*2;
+  const start = new THREE.Vector3(r*sinT*Math.cos(phi), r*cosT, r*sinT*Math.sin(phi));
+  const dir = new THREE.Vector3((Math.random()-0.5), -(0.35+Math.random()*0.4), (Math.random()-0.5)).normalize();
+
+  const TRAIL=14, SPACING=0.09;
+  const pos=new Float32Array(TRAIL*3), col=new Float32Array(TRAIL*3);
+  for (let i=0;i<TRAIL;i++){
+    const p = start.clone().addScaledVector(dir, -i*SPACING);
+    pos[i*3]=p.x; pos[i*3+1]=p.y; pos[i*3+2]=p.z;
+    const b = Math.max(0, 1 - i/TRAIL);
+    col[i*3]=b; col[i*3+1]=b; col[i*3+2]=b;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color', new THREE.BufferAttribute(col,3));
+  const mat=new THREE.PointsMaterial({
+    size:2.6, sizeAttenuation:false, vertexColors:true,
+    transparent:true, opacity:1, depthWrite:false, blending:THREE.AdditiveBlending
+  });
+  const pts=new THREE.Points(g, mat);
+  starSphere.add(pts);
+  shootingStars.push({pts, dir, speed:4+Math.random()*3, life:0, maxLife:0.8+Math.random()*0.4});
+}
+
+function updateShootingStars(dt) {
+  for (let i=shootingStars.length-1; i>=0; i--) {
+    const s=shootingStars[i];
+    s.life += dt;
+    if (s.life >= s.maxLife) {
+      starSphere.remove(s.pts);
+      s.pts.geometry.dispose(); s.pts.material.dispose();
+      shootingStars.splice(i,1);
+      continue;
+    }
+    s.pts.position.addScaledVector(s.dir, s.speed*dt);
+    s.pts.material.opacity = s.life < s.maxLife*0.6 ? 1 : 1 - (s.life-s.maxLife*0.6)/(s.maxLife*0.4);
+  }
+}
+
+// North wall — the DM's focus wall: island-map mosaic + panorama storm window
+// North wall — the room's centerpiece: the party and their mentor, framed
+// large above everything else on the wall.
+function buildFocusWall() {
+  buildFramedImage(0, -OCT_HW, 0, 'maps/Morvun-Districts.jpg', 2048/1536, 'MORVUN — DISTRIKTE', 2.2, 1.6);
+}
+
+// East wall — the library ("Tintenstube")
+function buildLibraryWall() {
+  const x = OCT_HW-0.05;
+  buildBookshelf(x,-0.85,-Math.PI/2,1.55);
+  buildBookshelf(x, 0.85,-Math.PI/2,1.55);
+}
+
+function buildBookshelf(x,z,ry,width) {
+  const grp=new THREE.Group();
+  const carc=new THREE.Mesh(new THREE.BoxGeometry(width,2.3,0.3),mat(WOOD_DARK,0,0,0.6,0.03));
+  carc.position.set(0,1.15,0); grp.add(carc);
+  [0.45,0.95,1.45,1.95].forEach(y=>{
+    const sh=new THREE.Mesh(new THREE.BoxGeometry(width-0.04,0.03,0.28),mat(WOOD,0,0,0.55,0.02));
+    sh.position.set(0,y,0.01); grp.add(sh);
+  });
+  const c=document.createElement('canvas'); c.width=256; c.height=340;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#2a1a10'; ctx.fillRect(0,0,256,340);
+  const spineColors=['#8a1f2b','#c9a24a','#2f6f5e','#3a5a80','#6b3a55','#a4682f'];
+  for(let row=0; row<4; row++){
+    let cx=6; const rowY=row*82+8, rowH=70;
+    while(cx<250){
+      const bw=8+Math.random()*10;
+      ctx.fillStyle=spineColors[Math.floor(Math.random()*spineColors.length)];
+      ctx.fillRect(cx,rowY,bw,rowH*(0.85+Math.random()*0.15));
+      cx+=bw+2;
+    }
+  }
+  const face=new THREE.Mesh(new THREE.PlaneGeometry(width-0.06,2.1),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c)}));
+  face.position.set(0,1.15,0.16); grp.add(face);
+
+  grp.position.set(x,0,z); grp.rotation.y=ry; scene.add(grp);
+}
+
+// West wall — the hearth, in the players' line of sight
+function buildFireplace(x,z,ry) {
+  const grp=new THREE.Group();
+  const surround=new THREE.Mesh(new THREE.BoxGeometry(1.5,1.85,0.35),mat(STONE_BLUE,0,0,0.65,0.04));
+  surround.position.set(0,0.93,0); grp.add(surround);
+  const box=new THREE.Mesh(new THREE.BoxGeometry(0.85,1.0,0.2),mat(0x0d0a08,0,0,0.9,0));
+  box.position.set(0,0.58,0.09); grp.add(box);
+  const mantel=new THREE.Mesh(new THREE.BoxGeometry(1.68,0.09,0.4),mat(GOLD,0x3a2a10,0.3,0.4,0.15));
+  mantel.position.set(0,1.5,0); grp.add(mantel);
+  const mantelEdge=new THREE.Mesh(new THREE.BoxGeometry(1.7,0.02,0.42),mat(GOLD,GOLD,1.6,0));
+  mantelEdge.position.set(0,1.55,0); grp.add(mantelEdge);
+  const breast=new THREE.Mesh(new THREE.BoxGeometry(1.05,WALL_H-1.6,0.28),mat(STONE_BLUE,0,0,0.65,0.04));
+  breast.position.set(0,1.6+(WALL_H-1.6)/2,0.03); grp.add(breast);
+
+  const ember=new THREE.Mesh(new THREE.SphereGeometry(0.2,8,8),mat(AMBER,AMBER,2.3,0));
+  ember.position.set(0,0.3,0.11); grp.add(ember);
+  emberMesh = ember;
+  const logA=new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.065,0.46,6),mat(0x2a1a10,0,0,0.8));
+  logA.rotation.z=Math.PI/2; logA.position.set(0,0.16,0.09); grp.add(logA);
+
+  grp.position.set(x,0,z); grp.rotation.y=ry; scene.add(grp);
+
+  hearthLight = new THREE.PointLight(AMBER, 1.0, 4.5);
+  const off = new THREE.Vector3(0,0.55,0.6).applyEuler(new THREE.Euler(0,ry,0));
+  hearthLight.position.set(x+off.x, 0.55, z+off.z);
+  scene.add(hearthLight);
+}
+
+// South wall, behind the players — two more player portraits
+function buildMapWall() {
+  buildFramedImage(-1.0, OCT_HW, Math.PI, 'portraits/Mira.jpg', 1792/2688, 'MIRAZ MIRA');
+  buildFramedImage( 1.0, OCT_HW, Math.PI, 'portraits/Thavir.jpg', 896/1344, 'THAVIR VINDARIEL');
+}
+
+// Player portraits — gold-framed, mounted on the three empty chamfer walls
+// (SE, SW, NW — the ones not already claimed by the map, library or hearth).
+function buildPortraits() {
+  buildPortrait(3, 'portraits/Athanor.jpg', 944/1408, 'ATHANOR ALINEA');
+  buildPortrait(5, 'portraits/Tharik.jpg', 1792/2688, 'THARIK BORKHEIMER');
+  buildPortrait(7, 'portraits/Ranz.jpg', 1080/1620, 'RANZ VOM SÄBELMALMKLAN');
+}
+
+function buildPortrait(wallIndex, url, aspect, name) {
+  const w = octWallDefs()[wallIndex];
+  buildFramedImage(w.mid[0], w.mid[1], w.ry, url, aspect, name);
+}
+
+// Gilt wood-framed wall image with a nameplate — shared by the character
+// portraits and the map posters so they read as one consistent gallery.
+function buildFramedImage(midX, midZ, ry, url, aspect, name, H=1.35, y=1.75) {
+  const W = H*aspect;
+  const nx = Math.sin(ry), nz = Math.cos(ry);
+
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(W+0.16,H+0.16,0.06),mat(WOOD_DARK,0,0,0.5,0.08));
+  frame.position.set(midX+nx*0.03, y, midZ+nz*0.03); frame.rotation.y=ry; scene.add(frame);
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(W+0.22,H+0.22,0.03),mat(GOLD,GOLD,1.4,0));
+  edge.position.set(midX+nx*0.02, y, midZ+nz*0.02); edge.rotation.y=ry; scene.add(edge);
+
+  const tex = new THREE.TextureLoader().load(url);
+  const imgOffset = new THREE.Vector3(0,0,0.065).applyEuler(new THREE.Euler(0,ry,0));
+  const img = new THREE.Mesh(new THREE.PlaneGeometry(W,H), new THREE.MeshBasicMaterial({map:tex}));
+  img.position.set(midX+imgOffset.x, y, midZ+imgOffset.z); img.rotation.y=ry; scene.add(img);
+
+  const nc=document.createElement('canvas'); nc.width=320; nc.height=64;
+  const nctx=nc.getContext('2d');
+  nctx.fillStyle='rgba(10,8,4,0.85)'; nctx.fillRect(0,0,320,64);
+  nctx.strokeStyle='rgba(224,184,76,0.6)'; nctx.lineWidth=2; nctx.strokeRect(2,2,316,60);
+  nctx.fillStyle='#e0b84c'; nctx.textAlign='center'; nctx.textBaseline='middle';
+  let fontSize=26; // shrink to fit longer full names (with surnames) in the fixed-width plate
+  do { nctx.font=`bold ${fontSize}px Cinzel,serif`; fontSize--; } while (nctx.measureText(name).width>300 && fontSize>12);
+  nctx.fillText(name, 160, 33);
+  const plateOffset = new THREE.Vector3(0,0,0.045).applyEuler(new THREE.Euler(0,ry,0));
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.55,0.11),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(nc), transparent:true}));
+  plate.position.set(midX+plateOffset.x, y-H/2-0.14, midZ+plateOffset.z);
+  plate.rotation.y=ry; scene.add(plate);
+}
+
+// ══════════ FURNITURE ══════════
+function buildFurniture() {
+  buildTable();
+  floatingLantern(1.3, 2.4, -0.7);
+  floatingLantern(-1.5, 2.35, 1.1);
+  floatingLantern(1.6, 2.3, 1.9);
+  floatingLantern(-1.2, 2.4, -1.9);
+  buildSecretWing();
+}
+
+function buildTable() {
+  const TL = TABLE_TL, TW = TABLE_TW, TY = 0.78;
+
+  // four corner legs
+  [[-TL/2+0.2,-TW/2+0.2],[-TL/2+0.2,TW/2-0.2],
+   [ TL/2-0.2,-TW/2+0.2],[ TL/2-0.2,TW/2-0.2]].forEach(([x,z])=>{
+    const leg=new THREE.Mesh(new THREE.BoxGeometry(0.12,TY-0.09,0.12),mat(WOOD_DARK,0,0,0.55,0.03));
+    leg.position.set(x,(TY-0.09)/2,z); scene.add(leg);
+    const footD=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,0.04,16),mat(STONE,0,0,0.6,0.03));
+    footD.position.set(x,0.02,z); scene.add(footD);
+  });
+
+  // marble top with gilt rim
+  const top=new THREE.Mesh(new THREE.BoxGeometry(TL,0.09,TW),mat(STONE,0,0,0.5,0.06));
+  top.position.set(0,TY,0); top.castShadow=true; top.receiveShadow=true; scene.add(top);
+  [-TW/2,TW/2].forEach(z=>{
+    const e=new THREE.Mesh(new THREE.BoxGeometry(TL+0.02,0.04,0.04),mat(GOLD,GOLD,1.8,0));
+    e.position.set(0,TY+0.06,z); scene.add(e);
+  });
+  const dmE=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.04,TW+0.02),mat(TEAL,TEAL,2.2,0));
+  dmE.position.set(-TL/2,TY+0.06,0); scene.add(dmE);
+  const plE=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.04,TW+0.02),mat(GOLD,GOLD,1.8,0));
+  plE.position.set(TL/2,TY+0.06,0); scene.add(plE);
+
+  // recessed battlemap
+  const mc=document.createElement('canvas'); mc.width=440; mc.height=200;
+  const mctx=mc.getContext('2d');
+  mctx.fillStyle='#1c2430'; mctx.fillRect(0,0,440,200);
+  mctx.strokeStyle='rgba(224,184,76,0.22)'; mctx.lineWidth=1;
+  for(let i=20;i<440;i+=20){ mctx.beginPath(); mctx.moveTo(i,0); mctx.lineTo(i,200); mctx.stroke(); }
+  for(let i=20;i<200;i+=20){ mctx.beginPath(); mctx.moveTo(0,i); mctx.lineTo(440,i); mctx.stroke(); }
+  drawCompassRose(mctx,220,100,55,'rgba(224,184,76,0.16)');
+  defaultMapTexture=new THREE.CanvasTexture(mc);
+  battleMapMesh=new THREE.Mesh(new THREE.PlaneGeometry(TL*0.72,TW*0.7),
+    new THREE.MeshBasicMaterial({map:defaultMapTexture}));
+  // Sit just above the table top's outer face (TY+0.045), not below it —
+  // a flat plane placed inside the opaque top box is fully occluded by
+  // that box's own top face and can never be seen, texture or not.
+  battleMapMesh.rotation.x=-Math.PI/2; battleMapMesh.position.set(0,TY+0.05,0); scene.add(battleMapMesh);
+  const mapRim=new THREE.Mesh(new THREE.PlaneGeometry(TL*0.72+0.03,TW*0.7+0.03),
+    mat(GOLD,GOLD,1.0,0.4,0.1));
+  mapRim.rotation.x=-Math.PI/2; mapRim.position.set(0,TY+0.048,0); scene.add(mapRim);
+
+  // DM privacy screen — low gold-framed panel at the head of the table.
+  // The panel is wide along local Z, so the lean must rotate around Z (the
+  // axis running along its own width) for a uniform tilt — rotating around
+  // X (perpendicular to the width) instead sweeps each point along the
+  // width by a different amount, which is what produced the diagonal skew.
+  const screenGrp=new THREE.Group();
+  const panel=new THREE.Mesh(new THREE.BoxGeometry(0.025,0.34,TW*0.7),mat(WOOD_DARK,0,0,0.5,0.05));
+  panel.position.set(0,0.17,0); screenGrp.add(panel);
+  const panelEdge=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.02,TW*0.7+0.02),mat(GOLD,GOLD,1.6,0));
+  panelEdge.position.set(0,0.34,0); screenGrp.add(panelEdge);
+  // DM's seat is due -X (dir [-1,0] below), the same direction this panel
+  // was already built for on the old rectangular table, so the geometry
+  // and lean rotation carry over unchanged — only the radius changed.
+  screenGrp.position.set(-TL/2+0.14,TY+0.05,0);
+  screenGrp.rotation.z=-0.18; // gentle, uniform lean back toward the DM
+  scene.add(screenGrp);
+
+  // seats — DM at the head (slightly elevated), four players along the long sides, one at the foot
+  const dais=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.52,0.08,24),mat(WOOD_CREAM,0,0,0.6,0.03));
+  dais.position.set(-(TL/2+0.5),0.04,0); scene.add(dais);
+
+  const seats=[
+    {x:-(TL/2+0.5), z:0,        y:0.13,  col:TEAL, label:'DM'},
+    {x:-TL/4,        z:-(TW/2+0.55), y:0.012, col:GOLD, label:null},
+    {x: TL/4,        z:-(TW/2+0.55), y:0.012, col:GOLD, label:null},
+    {x:-TL/4,        z: TW/2+0.55,   y:0.012, col:GOLD, label:null},
+    {x: TL/4,        z: TW/2+0.55,   y:0.012, col:GOLD, label:null},
+    {x: TL/2+0.5,    z:0,        y:0.012, col:GOLD, label:null},
+  ];
+  seats.forEach(({x,z,y,col,label})=>{
+    const pad=new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,0.025,20),
+      mat(col===TEAL?0x0a1420:0x1c1508,col,0.5,0.3,0.5));
+    pad.position.set(x,y,z); scene.add(pad);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(0.32,0.02,8,24),mat(col,col,2.0));
+    ring.rotation.x=Math.PI/2; ring.position.set(x,y+0.015,z); scene.add(ring);
+    if(label){
+      const lc=document.createElement('canvas'); lc.width=128; lc.height=40;
+      const lctx=lc.getContext('2d');
+      lctx.fillStyle='#3aa0c4'; lctx.font='bold 18px Cinzel,serif';
+      lctx.textAlign='center'; lctx.textBaseline='middle';
+      lctx.shadowColor='#3aa0c4'; lctx.shadowBlur=10;
+      lctx.fillText(label,64,20);
+      const lbl=new THREE.Mesh(new THREE.PlaneGeometry(0.6,0.19),
+        new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(lc),transparent:true,side:THREE.DoubleSide}));
+      lbl.rotation.x=-Math.PI/2; lbl.position.set(x,y+0.03,z); scene.add(lbl);
+    }
+  });
+}
+
+// Applies (or clears) the combat map on the table's recessed battlemap
+// surface. Called both locally (right after the DM's own upload, for
+// instant feedback) and from the network handler when someone else's map
+// update arrives.
+function setBattleMap(url) {
+  currentMapUrl = url;
+  if (!battleMapMesh) return;
+  if (!url) {
+    battleMapMesh.material.map = defaultMapTexture;
+    battleMapMesh.material.needsUpdate = true;
+    battleMapMesh.scale.set(1,1,1);
+    return;
+  }
+  new THREE.TextureLoader().load(url, tex => {
+    // Fit the image inside the fixed recessed area without distorting it —
+    // shrink along whichever axis the image is relatively narrower on.
+    const boundW = TABLE_TL*0.72, boundH = TABLE_TW*0.7;
+    const imgAspect = tex.image.width / tex.image.height;
+    const boundAspect = boundW / boundH;
+    let sx=1, sy=1;
+    if (imgAspect > boundAspect) sy = boundAspect/imgAspect;
+    else sx = imgAspect/boundAspect;
+    battleMapMesh.material.map = tex;
+    battleMapMesh.material.needsUpdate = true;
+    battleMapMesh.scale.set(sx, sy, 1);
+  });
+}
+
+async function uploadImage(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('upload_preset', CLOUDINARY_PRESET);
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {method:'POST', body:fd});
+  if (!res.ok) throw new Error('Cloudinary-Upload fehlgeschlagen: '+res.status);
+  const data = await res.json();
+  return data.secure_url;
+}
+
+async function broadcastMap(url) {
+  if (!agoraClient) return;
+  try {
+    await agoraClient.sendStreamMessage(
+      new TextEncoder().encode(JSON.stringify({type:'map', url})), true);
+  } catch(e) { console.warn('map broadcast failed:', e); }
+}
+
+// Normalized (u,v) on the map image -> world position, using the plane's
+// own current transform (rotation/scale/position) so this stays correct
+// regardless of how the map's aspect-fit scale changed on load. u,v follow
+// THREE's own PlaneGeometry UV convention (0,0 at local -width/2,-height/2),
+// the same convention a raycast hit against battleMapMesh already returns —
+// that self-consistency is what actually matters, not which edge is "up".
+function mapUVToWorld(u, v) {
+  const baseW = TABLE_TL*0.72, baseH = TABLE_TW*0.7;
+  const local = new THREE.Vector3((u-0.5)*baseW, (v-0.5)*baseH, 0.004);
+  return battleMapMesh.localToWorld(local);
+}
+
+function makeTokenMesh(url, color) {
+  const grp = new THREE.Group();
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(TOKEN_RADIUS, 24),
+    new THREE.MeshBasicMaterial({map:new THREE.TextureLoader().load(url)}));
+  disc.rotation.x=-Math.PI/2;
+  grp.add(disc);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(TOKEN_RADIUS*0.92, TOKEN_RADIUS*1.12, 24),
+    new THREE.MeshBasicMaterial({color, side:THREE.DoubleSide}));
+  ring.rotation.x=-Math.PI/2; ring.position.y=-0.0005;
+  grp.add(ring);
+  return {grp, disc};
+}
+
+const TOKEN_COLORS = {player:TEAL, ally:EMERALD, enemy:EMBER, companion:ORANGE};
+const TOKEN_SCALES = {small:0.7, medium:1.0, large:1.5};
+
+function addToken(id, url, u, v, category, size, broadcast) {
+  if (tokens[id]) return; // already exists locally (e.g. echo of our own broadcast never happens, but late-join resync could repeat)
+  const color = TOKEN_COLORS[category] || EMBER;
+  const {grp, disc} = makeTokenMesh(url, color);
+  const scale = TOKEN_SCALES[size] || 1.0;
+  // The disc/ring are rotated -90° on X to lie flat, which maps their
+  // local Y-radius onto the group's Z axis, not Y (Y becomes the vertical/
+  // normal direction post-rotation). Scaling group X+Y here would only
+  // stretch one radius and leave the other untouched — an oval, not a
+  // bigger circle. X and Z are the two in-plane radii; Y stays 1.
+  grp.scale.set(scale, 1, scale);
+  disc.userData.tokenId = id;
+  grp.position.copy(mapUVToWorld(u, v));
+  scene.add(grp);
+  tokens[id] = {grp, disc, url, u, v, category, size, lastBroadcast:0};
+  if (broadcast) broadcastToken({type:'tokenAdd', id, url, u, v, category, size}, true);
+}
+
+function moveToken(id, u, v, broadcast, reliable) {
+  const t = tokens[id];
+  if (!t) return;
+  t.u=u; t.v=v;
+  t.grp.position.copy(mapUVToWorld(u, v));
+  if (broadcast) broadcastToken({type:'tokenMove', id, u, v}, !!reliable);
+}
+
+function removeToken(id, broadcast) {
+  const t = tokens[id];
+  if (!t) return;
+  scene.remove(t.grp);
+  delete tokens[id];
+  if (broadcast) broadcastToken({type:'tokenRemove', id}, true);
+}
+
+async function broadcastToken(msg, reliable) {
+  if (!agoraClient) return;
+  try {
+    await agoraClient.sendStreamMessage(new TextEncoder().encode(JSON.stringify(msg)), reliable);
+  } catch(e) { console.warn('token broadcast failed:', e); }
+}
+
+// ══════════ SECRET ROOM ══════════
+// A hidden wing behind the library, reached through a gap carved into the
+// NE chamfer wall — a small violet chamber for two to talk unheard.
+function buildSecretWing() {
+  const doorWall = doorWallInfo; // NE chamfer
+  const gapW = SECRET_CORR_W, archH = 2.05;
+  const tangent=[Math.cos(doorWall.ry), -Math.sin(doorWall.ry)];
+  const jambW=(doorWall.width-gapW)/2;
+
+  // Double-sided: unlike the rest of the perimeter walls, these jambs are
+  // walkable-past on both faces (main room on one side, corridor on the
+  // other), so a single-sided material would vanish from one direction.
+  // Full jambW (no inset) so the inner edge lands exactly at gapW/2, flush
+  // against the corridor's own side wall — the old "-0.03" reveal left a
+  // real 1.5cm gap there that a distant grazing ray could slip through,
+  // showing the dome beyond as if a chunk of wall were missing.
+  [-1,1].forEach(side=>{
+    const off=(gapW/2+jambW/2)*side;
+    const jx=doorWall.mid[0]+tangent[0]*off, jz=doorWall.mid[1]+tangent[1]*off;
+    const lower=new THREE.Mesh(new THREE.PlaneGeometry(jambW,WALL_H/3),mat(WOOD_CREAM,0,0,0.6,0.03,THREE.DoubleSide));
+    lower.position.set(jx,WALL_H/6,jz); lower.rotation.y=doorWall.ry; scene.add(lower);
+    const upper=new THREE.Mesh(new THREE.PlaneGeometry(jambW,WALL_H*2/3),mat(STONE_WALL,0x000000,0,0.6,0.02,THREE.DoubleSide));
+    upper.position.set(jx,WALL_H*2/3,jz); upper.rotation.y=doorWall.ry; scene.add(upper);
+  });
+  const lintel=new THREE.Mesh(new THREE.BoxGeometry(gapW+0.34,0.16,0.16),mat(STONE_TRIM,0,0,0.55,0.05));
+  lintel.position.set(doorWall.mid[0],archH,doorWall.mid[1]); lintel.rotation.y=doorWall.ry; scene.add(lintel);
+  [-1,1].forEach(side=>{
+    const px=doorWall.mid[0]+tangent[0]*(gapW/2+0.06)*side, pz=doorWall.mid[1]+tangent[1]*(gapW/2+0.06)*side;
+    const p=new THREE.Mesh(new THREE.BoxGeometry(0.15,archH,0.15),mat(STONE_TRIM,0,0,0.55,0.05));
+    p.position.set(px,archH/2,pz); p.rotation.y=doorWall.ry; scene.add(p);
+  });
+
+  // a small silence-rune sigil above the arch
+  addScreen(doorWall.mid[0], archH+0.3, doorWall.mid[1], doorWall.ry, 0.46,0.28, (ctx,w,h)=>{
+    ctx.fillStyle='#241533'; ctx.fillRect(0,0,w,h);
+    ctx.strokeStyle='rgba(160,120,220,0.75)'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(w/2,h/2,h*0.34,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w*0.28,h*0.5); ctx.lineTo(w*0.72,h*0.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w*0.5,h*0.22); ctx.lineTo(w*0.5,h*0.78); ctx.stroke();
+  });
+
+  // everything beyond the doorway lives in a local wing: local +Z = outward, into the passage
+  const wing=new THREE.Group();
+  wing.position.set(doorWall.mid[0],0,doorWall.mid[1]);
+  wing.rotation.y=doorWall.ry+Math.PI;
+  scene.add(wing);
+
+  // Extended slightly past the threshold (into negative local Z, back toward
+  // the main room) so the corridor walls overlap the jamb walls at the
+  // corner instead of meeting them edge-to-edge.
+  // Full WALL_H tall, matching the jamb's height exactly — the corridor used
+  // to be shorter (WALL_H*0.75) than the main room's walls, so any ray that
+  // cleared the corridor's own low ceiling while still within the passage's
+  // narrow width had genuinely open air above it, straight up into the dome.
+  // That wasn't a crack to seal, it was a real height gap between the two
+  // structures.
+  const OVERLAP=0.2;
+  const CORR_L=SECRET_CORR_L;
+  const spanL=CORR_L+OVERLAP, spanMid=(CORR_L-OVERLAP)/2;
+  const cf=new THREE.Mesh(new THREE.PlaneGeometry(gapW,spanL),mat(STONE,0,0,0.6,0.02));
+  cf.rotation.x=-Math.PI/2; cf.position.set(0,0,spanMid); wing.add(cf);
+  [-1,1].forEach(side=>{
+    const w=new THREE.Mesh(new THREE.PlaneGeometry(spanL,WALL_H),mat(STONE_WALL,0x000000,0,0.6,0.02));
+    w.position.set(side*gapW/2,WALL_H/2,spanMid);
+    w.rotation.y = side>0 ? -Math.PI/2 : Math.PI/2;
+    wing.add(w);
+  });
+  const cc=new THREE.Mesh(new THREE.PlaneGeometry(gapW,spanL),mat(0x1c1428,0,0,0.7));
+  cc.rotation.x=Math.PI/2; cc.position.set(0,WALL_H,spanMid); wing.add(cc);
+
+  const torch=new THREE.PointLight(0x9a6fd8,0.9,5);
+  torch.position.set(0,1.65,CORR_L*0.55); wing.add(torch);
+  const torchGlow=new THREE.Mesh(new THREE.SphereGeometry(0.05,8,8),mat(0x9a6fd8,0x9a6fd8,1.6));
+  torchGlow.position.copy(torch.position); wing.add(torchGlow);
+
+  buildSecretRoom(wing, CORR_L, gapW);
+}
+
+function buildSecretRoom(wing, corrL, corrW) {
+  // Same height as the corridor/main room (WALL_H) — a shorter room ceiling
+  // here reintroduces the exact same kind of gap one level further in.
+  const SW=SECRET_ROOM_W, SD=SECRET_ROOM_D, SH=WALL_H, TY=0.7;
+  const cz = corrL + SD/2;
+  const VIOLET=0x2c1f42, VIOLET_TRIM=0x9a6fd8;
+
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(SW,SD),mat(0x241933,0,0,0.6,0.02));
+  floor.rotation.x=-Math.PI/2; floor.position.set(0,0,cz); wing.add(floor);
+  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(SW,SD),mat(0x120c1c,0,0,0.7));
+  ceil.rotation.x=Math.PI/2; ceil.position.set(0,SH,cz); wing.add(ceil);
+
+  [
+    [[0,SD/2],[0,0,0],SW],           // back wall, opposite the entrance
+    [[-SW/2,0],[0,Math.PI/2,0],SD],  // left wall
+    [[ SW/2,0],[0,-Math.PI/2,0],SD], // right wall
+  ].forEach(([[lx,lz],[rx,ry,rz],width])=>{
+    const w=new THREE.Mesh(new THREE.PlaneGeometry(width,SH),mat(VIOLET,0,0,0.6,0.05));
+    w.position.set(lx,SH/2,cz+lz); w.rotation.set(rx,ry,rz); wing.add(w);
+    const trim=new THREE.Mesh(new THREE.BoxGeometry(width-0.1,0.04,0.03),mat(VIOLET_TRIM,VIOLET_TRIM,1.4,0));
+    trim.position.set(lx,SH-0.15,cz+lz); trim.rotation.y=ry; wing.add(trim);
+  });
+
+  // step walls where the room (SW wide) meets the narrower corridor (corrW) —
+  // the room's own left/right walls start flush at the entrance, but that
+  // leaves the strip between the corridor's edge and the room's full width
+  // completely unwalled right at the threshold. This is what was actually
+  // missing, distinct from the corridor/room ceiling-height gap fixed earlier.
+  [-1,1].forEach(side=>{
+    const stepW = SW/2 - corrW/2;
+    const stepX = side*(corrW/2 + stepW/2);
+    const step=new THREE.Mesh(new THREE.PlaneGeometry(stepW,SH),mat(VIOLET,0,0,0.6,0.05,THREE.DoubleSide));
+    step.position.set(stepX,SH/2,corrL); wing.add(step);
+    const stepTrim=new THREE.Mesh(new THREE.BoxGeometry(stepW-0.05,0.04,0.03),mat(VIOLET_TRIM,VIOLET_TRIM,1.4,0));
+    stepTrim.position.set(stepX,SH-0.15,corrL); wing.add(stepTrim);
+  });
+
+  // heavy curtains half-covering the entrance
+  [-1,1].forEach(side=>{
+    const curtain=new THREE.Mesh(new THREE.PlaneGeometry(0.5,SH-0.15),mat(0x1c1228,0,0,0.85));
+    curtain.position.set(side*(corrW/2+0.05),(SH-0.15)/2,corrL+0.02);
+    wing.add(curtain);
+  });
+
+  // small round table with a candle, and two facing stools
+  const table=new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,0.06,24),mat(WOOD_DARK,0,0,0.55,0.03));
+  table.position.set(0,TY,cz); wing.add(table);
+  const tleg=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.09,TY-0.06,10),mat(WOOD_DARK,0,0,0.5,0.03));
+  tleg.position.set(0,(TY-0.06)/2,cz); wing.add(tleg);
+
+  const candle=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.03,0.14,8),mat(0xe8dcc0,0,0,0.7));
+  candle.position.set(0,TY+0.1,cz); wing.add(candle);
+  const flame=new THREE.Mesh(new THREE.SphereGeometry(0.035,8,8),mat(AMBER,AMBER,2.4));
+  flame.position.set(0,TY+0.19,cz); wing.add(flame);
+  const candleLight=new THREE.PointLight(AMBER,1.2,4.5);
+  candleLight.position.copy(flame.position); wing.add(candleLight);
+  const fill=new THREE.PointLight(VIOLET_TRIM,0.5,6);
+  fill.position.set(0,1.6,cz); wing.add(fill);
+
+  [-0.65,0.65].forEach(dx=>{
+    const stool=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.2,0.42,16),mat(VIOLET,0,0,0.7,0.02));
+    stool.position.set(dx,0.21,cz); wing.add(stool);
+    const stoolTop=new THREE.Mesh(new THREE.CylinderGeometry(0.23,0.23,0.03,16),mat(VIOLET_TRIM,VIOLET_TRIM,0.8,0.4,0.1));
+    stoolTop.position.set(dx,0.42,cz); wing.add(stoolTop);
+  });
+
+  // faint silence-ward rune inlaid in the floor beneath the table
+  const rc=document.createElement('canvas'); rc.width=260; rc.height=260;
+  const rctx=rc.getContext('2d');
+  drawCompassRose(rctx,130,130,90,'rgba(154,111,216,0.28)');
+  rctx.strokeStyle='rgba(154,111,216,0.22)'; rctx.lineWidth=2;
+  rctx.beginPath(); rctx.arc(130,130,50,0,Math.PI*2); rctx.stroke();
+  const rune=new THREE.Mesh(new THREE.CircleGeometry(1.0,40),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(rc),transparent:true}));
+  rune.rotation.x=-Math.PI/2; rune.position.set(0,0.006,cz); wing.add(rune);
+}
+
+function floatingLantern(x,y,z) {
+  const rod=new THREE.Mesh(new THREE.CylinderGeometry(0.013,0.013,0.35,6),mat(0x2a2016,0,0,0.6));
+  rod.position.set(x,y+0.2,z); scene.add(rod);
+  const lantern=new THREE.Mesh(new THREE.SphereGeometry(0.12,10,10),mat(GOLD,GOLD,0.9,0));
+  lantern.position.set(x,y,z); scene.add(lantern);
+  const l=new THREE.PointLight(GOLD,0.4,4);
+  l.position.set(x,y,z); scene.add(l);
+  return l;
+}
+
+let rainMesh;
+function buildParticles() {
+  // floating gold dust motes, slow upward drift
+  const N=110, pos=new Float32Array(N*3), spd=new Float32Array(N);
+  for(let i=0;i<N;i++){
+    pos[i*3]=(Math.random()-.5)*OCT_HW*1.7;
+    pos[i*3+1]=Math.random()*WALL_H;
+    pos[i*3+2]=(Math.random()-.5)*OCT_HW*1.7;
+    spd[i]=.06+Math.random()*.2;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g.userData.spd=spd;
+  particleMesh=new THREE.Points(g,new THREE.PointsMaterial({color:GOLD,size:.014,transparent:true,opacity:.28}));
+  scene.add(particleMesh);
+
+  // rising embers near the hearth
+  const R=40, rpos=new Float32Array(R*3), rspd=new Float32Array(R);
+  for(let i=0;i<R;i++){
+    rpos[i*3]  = -OCT_HW+0.3+Math.random()*1.0;
+    rpos[i*3+1]= Math.random()*1.4;
+    rpos[i*3+2]= -0.6+Math.random()*1.2;
+    rspd[i]    = .3+Math.random()*.6;
+  }
+  const rg=new THREE.BufferGeometry();
+  rg.setAttribute('position',new THREE.BufferAttribute(rpos,3));
+  rg.userData.spd=rspd;
+  const emberPart=new THREE.Points(rg,new THREE.PointsMaterial({color:EMBER,size:.02,transparent:true,opacity:.4}));
+  scene.add(emberPart);
+  scene.userData.emberParticles=emberPart;
+}
+
+// ══════════ AVATAR ══════════
+function makeAvatar(asDM) {
+  const col  = asDM ? TEAL : GOLD;
+  const bmat = mat(asDM?0x16232f:0x261d10, asDM?0x1c2f3d:0x2e2313, 0.4, 0.5, 0.35);
+  const grp  = new THREE.Group();
+
+  // Body
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,1.1,16), bmat);
+  body.position.y=0.65; grp.add(body);
+
+  // Waist ring
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.32,0.025,8,24),
+    mat(col,col,3)); ring.rotation.x=Math.PI/2; ring.position.y=0.65; grp.add(ring);
+
+  // Front brooch + back cloak — the body already rotates to each player's
+  // real yaw (see broadcastPos/targetYaw below), but a plain symmetric
+  // cylinder makes that rotation invisible. These give it a silhouette so
+  // "which way is this person actually facing" reads at a glance, while the
+  // webcam head below stays billboarded so nobody's video ever disappears.
+  const gem = new THREE.Mesh(new THREE.SphereGeometry(0.045,10,10), mat(col,col,2.2,0.2,0.4));
+  gem.position.set(0, 0.86, -0.285);
+  grp.add(gem);
+  const cloak = new THREE.Mesh(new THREE.PlaneGeometry(0.5,0.95),
+    mat(asDM?0x0d1820:0x1a1208,0,0,0.85,0));
+  cloak.position.set(0, 0.55, 0.3);
+  grp.add(cloak);
+
+  // Webcam AS head — billboard square at head height
+  const HEAD_SIZE = 0.72;
+  const vidGeo = new THREE.PlaneGeometry(HEAD_SIZE, HEAD_SIZE);
+  const vidMesh = new THREE.Mesh(vidGeo,
+    new THREE.MeshBasicMaterial({color:0x111111, side:THREE.DoubleSide}));
+  vidMesh.position.y = 1.55;
+  vidMesh.userData.bill = true;
+  grp.add(vidMesh);
+
+  // Border around webcam head
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(vidGeo),
+    new THREE.LineBasicMaterial({color:col})
+  );
+  edges.position.y = 1.55;
+  edges.userData.bill = true;
+  grp.add(edges);
+
+  scene.add(grp);
+  return { grp, vidMesh };
+}
+
+function attachVideoToAvatar(user, videoEl) {
+  const tex=new THREE.VideoTexture(videoEl);
+  tex.minFilter=THREE.LinearFilter; tex.magFilter=THREE.LinearFilter;
+  user.vidMesh.material=new THREE.MeshBasicMaterial({map:tex,side:THREE.DoubleSide});
+}
+
+// Toggle the on-screen focus overlay for one remote user. Pass null to
+// close it. Silently does nothing if that user has no video (mic-only) —
+// there's nothing to show, not worth a dedicated empty state for this.
+function setFocus(uid) {
+  const wrap=document.getElementById('focus-overlay');
+  if (!uid || !users[uid]?.videoEl) {
+    focusedUid=null;
+    wrap.style.display='none';
+    return;
+  }
+  focusedUid=uid;
+  const vidEl=document.getElementById('focus-video');
+  vidEl.srcObject=users[uid].videoEl.srcObject;
+  vidEl.play().catch(()=>{});
+  document.getElementById('focus-label').textContent=users[uid].name||'Spieler';
+  wrap.style.display='block';
+}
+
+// ══════════ SPATIAL AUDIO ══════════
+function ensureACtx() {
+  if (!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if (audioCtx.state==='suspended') audioCtx.resume();
+}
+
+// The secret wing (corridor + room) is walled off from the main room for
+// audio purposes, not just distance falloff — once past the doorway
+// threshold, treat it as a separate acoustic zone so occupants of one
+// can't hear the other at all, regardless of in-world distance.
+function isInSecretWing(x, z) {
+  const th=doorWallInfo.ry+Math.PI, dc=Math.cos(th), ds=Math.sin(th);
+  const dox=x-doorWallInfo.mid[0], doz=z-doorWallInfo.mid[1];
+  const localZ = dox*ds + doz*dc;
+  return localZ > 0.5;
+}
+
+function wireSpatial(uid, track) {
+  ensureACtx();
+  try {
+    const src=audioCtx.createMediaStreamSource(new MediaStream([track.getMediaStreamTrack()]));
+    const pan=audioCtx.createPanner();
+    pan.panningModel='HRTF'; pan.distanceModel='inverse';
+    pan.refDistance=1.2; pan.maxDistance=40; pan.rolloffFactor=1.4;
+
+    // Two parallel paths so the spatial/flat toggle is a real bypass, not a
+    // trick played on the panner: panGain carries the HRTF-positioned
+    // signal, flatGain carries the same source completely unprocessed — no
+    // distance model, no reference point in the room at all, same as a
+    // normal call. Only one path is ever audible; setPannerPos() below
+    // crossfades between them every frame based on spatialMode.
+    const panGain=audioCtx.createGain();
+    const flatGain=audioCtx.createGain();
+    panGain.gain.value = spatialMode?1:0;
+    flatGain.gain.value = spatialMode?0:1;
+
+    // Isolation gate: hard-muted whenever speaker and listener are on
+    // opposite sides of the secret-room doorway (see isInSecretWing).
+    // Applies after the crossfade, so it holds in either audio mode.
+    const isoGain=audioCtx.createGain();
+    isoGain.gain.value=1;
+
+    // Per-listener volume for this one speaker — independent of spatial
+    // position or mode, a plain multiplier on top of everything else.
+    // Reads any volume already set for this uid rather than defaulting to
+    // 1, since setEnabled() on a mute toggle tears down and rebuilds this
+    // whole graph (see the 'user-published' handler below) and a slider
+    // the DM just set shouldn't silently reset every time someone mutes.
+    const volGain=audioCtx.createGain();
+    volGain.gain.value = users[uid].volume ?? 1;
+    users[uid].volume = volGain.gain.value;
+
+    src.connect(pan); pan.connect(panGain); panGain.connect(isoGain);
+    src.connect(flatGain); flatGain.connect(isoGain);
+    isoGain.connect(volGain); volGain.connect(audioCtx.destination);
+
+    users[uid].panner=pan;
+    users[uid].panGain=panGain;
+    users[uid].flatGain=flatGain;
+    users[uid].isoGain=isoGain;
+    users[uid].volGain=volGain;
+    setPannerPos(uid);
+  } catch(e) {
+    console.warn('Spatial audio fallback:', e);
+    track.play();
+  }
+}
+
+function wireAmbient(track) {
+  // Screen share / DM music: route directly to destination with no panning,
+  // but still gated off inside the secret room so it doesn't bleed in
+  // there either.
+  ensureACtx();
+  try {
+    const src = audioCtx.createMediaStreamSource(new MediaStream([track.getMediaStreamTrack()]));
+    const gain = audioCtx.createGain();
+    gain.gain.value = isInSecretWing(playerPos.x,playerPos.z) ? 0 : 0.85;
+    src.connect(gain);
+    gain.connect(audioCtx.destination);
+    musicGain = gain;
+  } catch(e) {
+    console.warn('Ambient audio fallback:', e);
+    track.play();
+  }
+}
+
+function setPannerPos(uid) {
+  const u=users[uid];
+  if (!u||!u.panner||!u.grp) return;
+  const p=u.grp.position, t=audioCtx.currentTime;
+  // Always keep the panner at the speaker's real position — harmless while
+  // muted via panGain below, and means flipping back to spatial mode is
+  // instantly correct with no re-sync needed.
+  u.panner.positionX.setValueAtTime(p.x,t);
+  u.panner.positionY.setValueAtTime(p.y+EYE_H,t);
+  u.panner.positionZ.setValueAtTime(p.z,t);
+  if (u.panGain) u.panGain.gain.setTargetAtTime(spatialMode?1:0, t, 0.1);
+  if (u.flatGain) u.flatGain.gain.setTargetAtTime(spatialMode?0:1, t, 0.1);
+  if (u.isoGain) {
+    const sameZone = isInSecretWing(p.x,p.z) === isInSecretWing(playerPos.x,playerPos.z);
+    u.isoGain.gain.setTargetAtTime(sameZone ? 1 : 0, t, 0.1);
+  }
+}
+
+// Per-listener volume for one specific remote user, independent of
+// spatial/flat mode and the secret-room isolation gate — a plain multiplier
+// on top of whatever those already decided. Persists across that user's
+// mute/unmute republish cycles (see the .volume read in wireSpatial).
+function setUserVolume(uid, vol) {
+  const u = users[uid];
+  if (!u) return;
+  u.volume = vol;
+  if (u.volGain && audioCtx) u.volGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
+}
+
+function updateMusicIsolation() {
+  if (!musicGain || !audioCtx) return;
+  const target = isInSecretWing(playerPos.x,playerPos.z) ? 0 : 0.85;
+  musicGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.1);
+}
+
+function updateListener() {
+  if (!audioCtx) return;
+  const l = audioCtx.listener, t = audioCtx.currentTime;
+  const fw = new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));
+
+  // Modern API (Chrome/Edge)
+  if (l.positionX) {
+    l.positionX.setValueAtTime(playerPos.x, t);
+    l.positionY.setValueAtTime(playerPos.y, t);
+    l.positionZ.setValueAtTime(playerPos.z, t);
+    l.forwardX.setValueAtTime(fw.x, t);
+    l.forwardY.setValueAtTime(fw.y, t);
+    l.forwardZ.setValueAtTime(fw.z, t);
+    l.upX.setValueAtTime(0, t);
+    l.upY.setValueAtTime(1, t);
+    l.upZ.setValueAtTime(0, t);
+  } else {
+    // Legacy API fallback (Safari, older Firefox)
+    l.setPosition(playerPos.x, playerPos.y, playerPos.z);
+    l.setOrientation(fw.x, fw.y, fw.z, 0, 1, 0);
+  }
+}
+
+// ══════════ ANIMATION LOOP ══════════
+let _t=0;
+function animate() {
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05);
+  _t+=dt;
+
+  // movement — clamped to the chamfered-octagon footprint. Frozen in place
+  // while the tactical view is active — it's a fixed bird's-eye shot of
+  // the table, not a flycam.
+  if (isLocked && !tacticalView) {
+    const spd=MOVE_SPEED*dt;
+    const fw =new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+    const rt =new THREE.Vector3( Math.cos(yaw),0,-Math.sin(yaw));
+    if(keys['KeyW']||keys['ArrowUp'])    playerPos.addScaledVector(fw, spd);
+    if(keys['KeyS']||keys['ArrowDown'])  playerPos.addScaledVector(fw,-spd);
+    if(keys['KeyA']||keys['ArrowLeft'])  playerPos.addScaledVector(rt,-spd);
+    if(keys['KeyD']||keys['ArrowRight']) playerPos.addScaledVector(rt, spd);
+
+    // is the player at/through the secret-room doorway? clamp within that
+    // passage instead of the main room so the archway is walkable, not a wall.
+    const th=doorWallInfo.ry+Math.PI, dc=Math.cos(th), ds=Math.sin(th);
+    const dox=playerPos.x-doorWallInfo.mid[0], doz=playerPos.z-doorWallInfo.mid[1];
+    const localX = dox*dc - doz*ds, localZ = dox*ds + doz*dc;
+    const doorHalf = (localZ < SECRET_CORR_L ? SECRET_CORR_W/2 : SECRET_ROOM_W/2) + 0.15;
+
+    // Trigger well before the main room's own clamp margin (0.45m, ~0.32m
+    // perpendicular to a 45°-chamfer wall) would otherwise pin the player
+    // short of this zone and deadlock them just outside the doorway.
+    if (localZ > -1.0 && Math.abs(localX) < doorHalf) {
+      const maxLz = SECRET_CORR_L + SECRET_ROOM_D - 0.3;
+      const clampedLz = Math.min(maxLz, localZ);
+      const maxLx = (clampedLz < SECRET_CORR_L ? SECRET_CORR_W/2-0.15 : SECRET_ROOM_W/2-0.3);
+      const clampedLx = Math.max(-maxLx, Math.min(maxLx, localX));
+      playerPos.x = doorWallInfo.mid[0] + clampedLx*dc + clampedLz*ds;
+      playerPos.z = doorWallInfo.mid[1] - clampedLx*ds + clampedLz*dc;
+    } else {
+      const margin=0.45;
+      playerPos.x=Math.max(-(OCT_HW-margin),Math.min(OCT_HW-margin,playerPos.x));
+      playerPos.z=Math.max(-(OCT_HW-margin),Math.min(OCT_HW-margin,playerPos.z));
+      const limit=2*OCT_HW-OCT_CH-margin;
+      const s=Math.abs(playerPos.x)+Math.abs(playerPos.z);
+      if(s>limit){ const k=limit/s; playerPos.x*=k; playerPos.z*=k; }
+    }
+
+    // gravity + jump
+    velY += GRAVITY * dt;
+    playerPos.y += velY * dt;
+    if (playerPos.y <= EYE_H) {
+      playerPos.y = EYE_H;
+      velY = 0;
+    }
+  }
+
+  // camera — a fixed bird's-eye shot centered on the table while the
+  // tactical view is on, otherwise the normal first-person follow. Reusing
+  // the same `camera` for both means every raycast-based interaction
+  // (token pickup/drop/drag) keeps working unchanged in either mode.
+  if (tacticalView && battleMapMesh) {
+    camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+1.6, battleMapMesh.position.z);
+    camera.rotation.set(-Math.PI/2, 0, 0, 'YXZ');
+  } else {
+    camera.position.copy(playerPos);
+    camera.rotation.set(pitch,yaw,0,'YXZ');
+  }
+
+  // listener
+  updateListener();
+  updateMusicIsolation();
+
+  // held token follows the crosshair across the map, throttled network
+  // update so everyone sees it move live during a drag, not just on drop
+  if (heldTokenId && tokens[heldTokenId] && battleMapMesh) {
+    tokenRaycaster.setFromCamera({x:0,y:0}, camera);
+    const hit = tokenRaycaster.intersectObject(battleMapMesh)[0];
+    if (hit) {
+      // Position directly from the raycast hit every frame (smoothest,
+      // exact) — only the throttled network broadcast below goes through
+      // the u/v round-trip, so it doesn't fight this with a tiny per-frame
+      // reposition of its own.
+      tokens[heldTokenId].grp.position.copy(hit.point);
+      const now = performance.now();
+      if (now - tokens[heldTokenId].lastBroadcast > POS_MS) {
+        tokens[heldTokenId].lastBroadcast = now;
+        tokens[heldTokenId].u = hit.uv.x; tokens[heldTokenId].v = hit.uv.y;
+        broadcastToken({type:'tokenMove', id:heldTokenId, u:hit.uv.x, v:hit.uv.y}, false);
+      }
+    }
+  }
+
+  // avatars
+  let nearDist=Infinity, nearName=null;
+  for (const [uid,u] of Object.entries(users)) {
+    if (!u.grp) continue;
+    if (u.targetX!==undefined) {
+      u.grp.position.x+=(u.targetX-u.grp.position.x)*.18;
+      u.grp.position.z+=(u.targetZ-u.grp.position.z)*.18;
+    }
+    if (u.targetYaw!==undefined) u.grp.rotation.y+=(u.targetYaw-u.grp.rotation.y)*.15;
+    setPannerPos(uid);
+
+    // billboard
+    u.grp.children.forEach(c=>{
+      if(c.userData.bill) { const wp=new THREE.Vector3(); c.getWorldPosition(wp); c.lookAt(camera.position); }
+    });
+
+    if (!u.isLocal) {
+      const dx=u.grp.position.x-playerPos.x, dz=u.grp.position.z-playerPos.z;
+      const d=Math.sqrt(dx*dx+dz*dz);
+      if(d<nearDist){nearDist=d;nearName=u.name;}
+    }
+  }
+
+  // proximity
+  const pe=document.getElementById('prox');
+  if(nearDist<PROX_DIST&&nearName){pe.textContent='▶ '+nearName.toUpperCase()+' IN DER NÄHE';pe.classList.add('show');}
+  else pe.classList.remove('show');
+
+  // dust motes
+  if(particleMesh){
+    const pos=particleMesh.geometry.attributes.position.array;
+    const spd=particleMesh.geometry.userData.spd;
+    for(let i=0;i<spd.length;i++){pos[i*3+1]+=spd[i]*dt*.2;if(pos[i*3+1]>WALL_H)pos[i*3+1]=0;}
+    particleMesh.geometry.attributes.position.needsUpdate=true;
+    particleMesh.material.opacity=.2+Math.sin(_t*.5)*.05;
+  }
+  // rising embers near the hearth
+  if(scene.userData.emberParticles){
+    const rp=scene.userData.emberParticles;
+    const pos=rp.geometry.attributes.position.array;
+    const spd=rp.geometry.userData.spd;
+    for(let i=0;i<spd.length;i++){pos[i*3+1]+=spd[i]*dt*.35;if(pos[i*3+1]>1.6)pos[i*3+1]=0;}
+    rp.geometry.attributes.position.needsUpdate=true;
+    rp.material.opacity=.28+Math.sin(_t*1.2)*.1;
+  }
+  // slow rotating night sky — a calm, low-fatigue timekeeper
+  if(starSphere) starSphere.rotation.y += dt*0.0026;
+  updateShootingStars(dt);
+  // Only the DM's client owns the spawn timer + broadcasts the trigger, so
+  // everyone sees one at the same moment instead of each client rolling
+  // its own independent (and unsynced) schedule.
+  if (isDM && starSphere) {
+    if (nextShootingStarAt===null) nextShootingStarAt = _t + 10 + Math.random()*20;
+    else if (_t > nextShootingStarAt) {
+      spawnShootingStar();
+      broadcastToken({type:'shootingStar'}, false);
+      nextShootingStarAt = _t + 45 + Math.random()*45;
+    }
+  }
+
+  // hearth flicker
+  if(hearthLight) hearthLight.intensity = 1.0 + Math.sin(_t*3.1)*0.12 + Math.sin(_t*7.7)*0.06;
+  if(emberMesh) emberMesh.material.emissiveIntensity = 2.3 + Math.sin(_t*4.4)*0.3;
+
+  // light pulse
+  if(cLight) cLight.intensity=1.3+Math.sin(_t*.7)*.15;
+  if(mLight) mLight.intensity=0.55+Math.sin(_t*.5+1)*.1;
+
+  renderer.render(scene,camera);
+}
+
+function onResize(){
+  if(!camera||!renderer)return;
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+}
+
+// ══════════ AGORA ══════════
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} — keine Antwort nach ${ms/1000}s`)), ms))
+  ]);
+}
+
+// Buffer for position messages that arrive before user-published
+const pendingPos = {};
+
+async function initAgora(appId, room, myName, asDM, token) {
+  joinedAppId=appId; joinedRoom=room; joinedToken=token||null; // needed later if the DM starts sharing music
+  agoraClient=AgoraRTC.createClient({mode:'rtc',codec:'vp8'});
+
+  agoraClient.on('user-published', async (ru, mediaType) => {
+    try {
+      await agoraClient.subscribe(ru, mediaType);
+    } catch(e) {
+      // Without this, a single failed subscribe (e.g. a transient network
+      // hiccup) throws inside the event handler, is silently swallowed by
+      // the SDK's event emitter, and that one track just never connects —
+      // with nothing in the console pointing at why.
+      console.warn('subscribe failed for uid', ru.uid, mediaType, e);
+      return;
+    }
+    const uid=ru.uid;
+
+    // Shared music, published from its own uid (see MUSIC_UID_OFFSET above) —
+    // always ambient, no avatar, nothing to disambiguate.
+    if (uid >= MUSIC_UID_OFFSET) {
+      if (mediaType==='audio') {
+        ensureACtx();
+        // The SDK auto-plays subscribed remote audio through its own hidden
+        // element by default. Stop that so ONLY our manual WebAudio routing
+        // below (which we can pan/gate) is ever actually audible — otherwise
+        // the raw, unpositioned copy plays alongside it.
+        ru.audioTrack.stop();
+        musicUid = uid;
+        wireAmbient(ru.audioTrack);
+      }
+      return;
+    }
+
+    if (!users[uid]) {
+      const {grp,vidMesh}=makeAvatar(false);
+      vidMesh.userData.uid = uid; // so a crosshair raycast hit can be traced back to a specific user
+      // Use buffered position if we got pos before user-published
+      const px = pendingPos[uid]?.x ?? (Math.random()-.5)*1.5;
+      const pz = pendingPos[uid]?.z ?? (Math.random()-.5)*1.5;
+      const pyaw = pendingPos[uid]?.yaw ?? 0;
+      grp.position.set(px,0,pz);
+      users[uid]={name:'User-'+uid,grp,vidMesh,targetX:px,targetZ:pz,targetYaw:pyaw};
+      delete pendingPos[uid];
+      // A player who joins after the DM already set a map/tokens never
+      // received those original broadcasts — Agora's data channel only
+      // reaches clients connected at send time, nothing is replayed for
+      // latecomers. Re-announcing on every new join covers that gap.
+      if (isDM) {
+        if (currentMapUrl) broadcastMap(currentMapUrl);
+        Object.entries(tokens).forEach(([id,t])=>{
+          broadcastToken({type:'tokenAdd', id, url:t.url, u:t.u, v:t.v, category:t.category, size:t.size}, true);
+        });
+      }
+      if (document.getElementById('vol-panel').style.display==='block') renderVolPanel();
+    }
+    if (mediaType==='video') {
+      users[uid].videoTrack=ru.videoTrack;
+      try {
+        const vel=document.createElement('video');
+        vel.autoplay=true; vel.muted=true; vel.playsInline=true;
+        vel.srcObject=new MediaStream([ru.videoTrack.getMediaStreamTrack()]);
+        vel.play().catch(()=>{});
+        attachVideoToAvatar(users[uid],vel);
+        users[uid].videoEl=vel; // reused directly for the focus overlay, not just the 3D texture
+        if (focusedUid===uid) setFocus(uid); // picture up mid-focus if their video just (re)connected
+      } catch(e){}
+    }
+    if (mediaType==='audio') {
+      // Real player uids only ever publish one audio track — their mic —
+      // always spatial. Music never shares this uid anymore.
+      ensureACtx();
+      // See the music branch above: stop the SDK's own auto-play so only
+      // our panned WebAudio graph is audible. This matters especially here
+      // because setEnabled() on an already-published track makes the SDK
+      // unpublish+republish under the hood — every mute/unmute cycle (the
+      // DM's mute-all, or a player's own mic button) re-triggers this
+      // 'user-published' event with a fresh audioTrack. Without stopping
+      // the new copy's auto-play each time, re-wiring wireSpatial() below
+      // just adds a second, unpanned copy on top of it — which is exactly
+      // the "spatial sound gone, everything's flat stereo" symptom seen
+      // after unmuting.
+      ru.audioTrack.stop();
+      // Tear down any stale graph from a previous publish of this uid
+      // before wiring a fresh one, so repeated mute/unmute cycles don't
+      // leak orphaned panner/gain nodes over a long session.
+      if (users[uid].panner) { try{users[uid].panner.disconnect();}catch(_){} }
+      if (users[uid].panGain) { try{users[uid].panGain.disconnect();}catch(_){} }
+      if (users[uid].flatGain) { try{users[uid].flatGain.disconnect();}catch(_){} }
+      if (users[uid].isoGain) { try{users[uid].isoGain.disconnect();}catch(_){} }
+      if (users[uid].volGain) { try{users[uid].volGain.disconnect();}catch(_){} }
+      users[uid].audioTrack = ru.audioTrack;
+      users[uid].hasAudio = true;
+      wireSpatial(uid, ru.audioTrack);
+    }
+  });
+
+  agoraClient.on('user-unpublished',(ru,mt)=>{
+    if(mt==='video'&&users[ru.uid])
+      users[ru.uid].vidMesh.material=new THREE.MeshBasicMaterial({color:0x111111,side:THREE.DoubleSide});
+    if(mt==='audio'&&users[ru.uid]){
+      // Disconnect the now-dead graph (the track behind it just stopped
+      // producing data) — a re-publish on unmute rebuilds it from scratch
+      // in the 'user-published' handler above.
+      if (users[ru.uid].panner) { try{users[ru.uid].panner.disconnect();}catch(_){} }
+      if (users[ru.uid].panGain) { try{users[ru.uid].panGain.disconnect();}catch(_){} }
+      if (users[ru.uid].flatGain) { try{users[ru.uid].flatGain.disconnect();}catch(_){} }
+      if (users[ru.uid].isoGain) { try{users[ru.uid].isoGain.disconnect();}catch(_){} }
+      if (users[ru.uid].volGain) { try{users[ru.uid].volGain.disconnect();}catch(_){} }
+      users[ru.uid].panner=null;
+      users[ru.uid].panGain=null;
+      users[ru.uid].flatGain=null;
+      users[ru.uid].isoGain=null;
+      users[ru.uid].volGain=null;
+      // .volume itself is intentionally left in place — a DM's slider
+      // setting for this person should survive their mute/unmute cycle.
+      users[ru.uid].hasAudio=false;
+    }
+  });
+
+  agoraClient.on('user-left',ru=>{
+    if(users[ru.uid]?.grp) scene.remove(users[ru.uid].grp);
+    delete users[ru.uid];
+    delete pendingPos[ru.uid];
+    if(ru.uid===musicUid){
+      if(musicGain){ try{musicGain.disconnect();}catch(_){} musicGain=null; }
+      musicUid=null;
+    }
+    if(document.getElementById('vol-panel').style.display==='block') renderVolPanel();
+    if(focusedUid===ru.uid) setFocus(null); // don't leave a frozen video of someone who just left
+  });
+
+  agoraClient.on('stream-message',(uid,data)=>{
+    try {
+      const msg=JSON.parse(new TextDecoder().decode(data));
+      if(msg.type==='pos'){
+        if(users[uid]){
+          // User exists — update directly
+          users[uid].targetX=msg.x;
+          users[uid].targetZ=msg.z;
+          users[uid].targetYaw=msg.yaw;
+        } else {
+          // User not yet created — buffer it
+          pendingPos[uid]={x:msg.x,z:msg.z,yaw:msg.yaw};
+        }
+      }
+      if(msg.type==='map'){
+        setBattleMap(msg.url||null);
+      }
+      if(msg.type==='tokenAdd'){
+        addToken(msg.id, msg.url, msg.u, msg.v, msg.category, msg.size, false);
+      }
+      if(msg.type==='tokenMove'){
+        moveToken(msg.id, msg.u, msg.v, false);
+      }
+      if(msg.type==='tokenRemove'){
+        removeToken(msg.id, false);
+      }
+      if(msg.type==='shootingStar'){
+        spawnShootingStar();
+      }
+      if(msg.type==='name'&&users[uid]){
+        users[uid].name=msg.name;
+      }
+      if(msg.type==='forceMute'){
+        // Only players act on this — the DM never receives their own broadcast.
+        if(msg.value && !forceMuted){
+          preForceMuteState = micMuted;
+          forceMuted = true;
+          micMuted = true;
+          if(localAudio) localAudio.setEnabled(false);
+          setMicUI();
+        } else if(!msg.value && forceMuted){
+          forceMuted = false;
+          micMuted = preForceMuteState;
+          if(localAudio) localAudio.setEnabled(!micMuted);
+          setMicUI();
+        }
+      }
+    }catch(e){ console.warn('stream-message parse failed:', e, 'from uid', uid); }
+  });
+
+  localUID=Math.floor(Math.random()*900000)+10000;
+  await agoraClient.join(appId,room,joinedToken,localUID);
+
+  // getUserMedia can hang indefinitely on some devices/permission states
+  // instead of rejecting — confirmed during testing (Agora SDK logged
+  // "createMicrophoneAndCameraTracks timeout" with no error surfaced).
+  // Without a timeout, the join button is stuck on "Verbinde…" forever with
+  // no feedback. If camera+mic together fail or time out, fall back to
+  // mic-only so a camera problem doesn't block someone from joining at all.
+  try {
+    [localAudio,localVideo]=await withTimeout(
+      AgoraRTC.createMicrophoneAndCameraTracks(
+        {AEC:true,ANS:true,AGC:true},{encoderConfig:'480p_1',facingMode:'user'}),
+      15000, 'Kamera/Mikrofon-Zugriff');
+  } catch(e) {
+    console.warn('Kamera+Mikrofon fehlgeschlagen, versuche nur Mikrofon:', e);
+    localVideo = null;
+    localAudio = await withTimeout(
+      AgoraRTC.createMicrophoneAudioTrack({AEC:true,ANS:true,AGC:true}),
+      12000, 'Mikrofon-Zugriff');
+  }
+  await agoraClient.publish(localVideo ? [localAudio,localVideo] : [localAudio]);
+
+  // local avatar
+  const {grp,vidMesh}=makeAvatar(asDM);
+  grp.position.set(playerPos.x,0,playerPos.z);
+  grp.visible=false;
+  users[localUID]={name:myName,grp,vidMesh,isLocal:true,isDM:asDM};
+
+  try {
+    const vel=document.createElement('video');
+    vel.autoplay=true; vel.muted=true; vel.playsInline=true;
+    vel.srcObject=new MediaStream([localVideo.getMediaStreamTrack()]);
+    vel.play().catch(()=>{});
+    attachVideoToAvatar(users[localUID],vel);
+  }catch(e){}
+
+  sendName(myName,asDM);
+  // Broadcast position frequently — use 50ms for smooth movement
+  setInterval(broadcastPos, 50);
+}
+
+let posSendFailLogged = false;
+let posSendInFlight = false;
+async function broadcastPos(){
+  // With more people in the room, an occasional send can take longer than
+  // the 50ms tick — skip this tick rather than let sends pile up behind
+  // each other (each one only ever carries the CURRENT position anyway, so
+  // skipping a tick loses nothing but a little smoothness).
+  if(!agoraClient || posSendInFlight)return;
+  posSendInFlight = true;
+  try{
+    // This SDK build silently drops the message if the returned promise is
+    // never awaited — no throw, no rejection, it just never reaches anyone.
+    // unreliable: high-frequency (20/s), only the latest position matters.
+    await agoraClient.sendStreamMessage(
+      new TextEncoder().encode(JSON.stringify({type:'pos',x:playerPos.x,z:playerPos.z,yaw})), false);
+    if(users[localUID]?.grp){
+      users[localUID].grp.position.x=playerPos.x;
+      users[localUID].grp.position.z=playerPos.z;
+      users[localUID].grp.rotation.y=yaw;
+    }
+  }catch(e){
+    // Log once, not 20x/sec — a persistent failure here means this client's
+    // avatar will appear frozen for everyone else, even though their own
+    // audio/video still works fine (those are separate media tracks).
+    if(!posSendFailLogged){ console.warn('sendStreamMessage(pos) failed — other players will not see you move:', e); posSendFailLogged=true; }
+  }finally{
+    posSendInFlight = false;
+  }
+}
+
+function sendName(name,asDM){
+  if(!agoraClient)return;
+  setTimeout(async ()=>{
+    try{await agoraClient.sendStreamMessage(
+      new TextEncoder().encode(JSON.stringify({type:'name',name,isDM:asDM})), true);}catch(e){ console.warn('sendStreamMessage(name) failed:', e); }
+  },300);
+}
+
+// ══════════ MUSIC STREAM ══════════
+async function toggleStream(){
+  const stat=document.getElementById('mstat');
+  const mbtn=document.getElementById('btn-music');
+  if(streaming){
+    try{
+      if(screenAudio && musicClient){await musicClient.unpublish(screenAudio);}
+      if(screenAudio){screenAudio.stop();screenAudio.close();screenAudio=null;}
+      if(musicClient){await musicClient.leave();musicClient=null;}
+    }catch(e){ console.warn('stopping music stream failed:', e); }
+    streaming=false;
+    document.getElementById('share-btn').textContent='🔊 Tab-Audio streamen';
+    stat.textContent='Inaktiv'; stat.className='mstat';
+    mbtn.classList.remove('str'); mbtn.querySelector('span').textContent='Musik';
+    return;
+  }
+  try{
+    stat.textContent='Browser-Tab auswählen…';
+    const tracks=await AgoraRTC.createScreenVideoTrack({encoderConfig:'1080p_1'},'enable');
+    const [sv,sa]=Array.isArray(tracks)?tracks:[tracks,null];
+    sv.stop(); sv.close();
+    if(!sa){stat.textContent='Kein Tab-Audio — "Tab-Ton teilen" im Dialog aktivieren';return;}
+    screenAudio=sa;
+    // Published from a second client on a derived uid — see MUSIC_UID_OFFSET
+    // — so the receiving end never has to guess which of this uid's tracks
+    // is the mic and which is the music.
+    musicClient=AgoraRTC.createClient({mode:'rtc',codec:'vp8'});
+    await musicClient.join(joinedAppId, joinedRoom, joinedToken, localUID + MUSIC_UID_OFFSET);
+    await musicClient.publish(sa);
+    streaming=true;
+    document.getElementById('share-btn').textContent='⏹ Stoppen';
+    stat.textContent='▶ Musik streamt für alle'; stat.className='mstat on';
+    mbtn.classList.add('str'); mbtn.querySelector('span').textContent='Musik läuft';
+  }catch(e){
+    stat.textContent='Fehler: '+e.message;
+    // Clean up a half-started attempt so the next click starts fresh.
+    try{ if(musicClient) await musicClient.leave(); }catch(_){}
+    musicClient=null; screenAudio=null; streaming=false;
+  }
+}
+
+// ══════════ UI EVENTS ══════════
+document.getElementById('join-btn').addEventListener('click', async()=>{
+  const appId=document.getElementById('f-appid').value.trim();
+  const room=document.getElementById('f-room').value.trim();
+  const token=document.getElementById('f-token').value.trim()||null;
+  isDM=document.getElementById('f-isdm').checked;
+  const name=isDM?'DM':'Spieler';
+  const err=document.getElementById('jerr');
+  if(appId.length<16){err.textContent='Bitte gültige Agora App-ID eingeben.';return;}
+  if(!room){err.textContent='Bitte Raum-Code eingeben.';return;}
+  err.textContent='';
+  localName=name;
+  const btn=document.getElementById('join-btn');
+  btn.disabled=true; btn.textContent='Verbinde…';
+  try{
+    document.getElementById('join-overlay').style.display='none';
+    initScene();
+    ensureACtx();
+    await initAgora(appId,room,name,isDM,token);
+    document.getElementById('hud').style.display='flex';
+    document.getElementById('ctrl').style.display='flex';
+    document.getElementById('hud-room').textContent='RAUM: '+room.toUpperCase();
+    if(!localVideo){
+      // Mic-only fallback kicked in — the camera button would otherwise be a dead click.
+      const camBtn=document.getElementById('btn-cam');
+      camBtn.disabled=true; camBtn.classList.add('off');
+      camBtn.querySelector('span').textContent='Keine Kamera';
+      camBtn.title='Kamera nicht verfügbar — nur Mikrofon aktiv';
+    }
+    if(isDM){
+      document.getElementById('gm').style.display='block';
+      document.getElementById('btn-music').style.display='flex';
+      document.getElementById('sep-dm').style.display='block';
+      renderRecentMaps(); renderRecentTokens();
+    }
+  }catch(e){
+    console.error(e);
+    // The channel join itself can succeed before media acquisition fails —
+    // leave it so a retry doesn't pile up an orphaned, trackless connection.
+    try{ if(agoraClient) await agoraClient.leave(); }catch(_){}
+    document.getElementById('join-overlay').style.display='flex';
+    btn.disabled=false; btn.textContent='▶ VERBINDEN';
+    err.textContent='Verbindungsfehler: '+(e.message||'Agora App-ID prüfen, Testing-Mode aktiv?');
+  }
+});
+
+function setMicUI(){
+  const b=document.getElementById('btn-mic');
+  if(forceMuted){
+    b.querySelector('span').textContent='Stumm (DM)';
+    b.classList.add('off');
+    b.title='Von der Spielleitung stummgeschaltet';
+  } else {
+    b.querySelector('span').textContent=micMuted?'Stumm':'Mic';
+    b.classList.toggle('off',micMuted);
+    b.title='';
+  }
+}
+
+document.getElementById('btn-mic').addEventListener('click',async()=>{
+  if(!localAudio)return;
+  if(forceMuted)return; // locked by the DM — cannot self-unmute
+  ensureACtx();
+  micMuted=!micMuted; await localAudio.setEnabled(!micMuted);
+  setMicUI();
+});
+
+document.getElementById('mute-all-btn').addEventListener('click',async()=>{
+  if(!agoraClient)return;
+  allMuted=!allMuted;
+  try{
+    await agoraClient.sendStreamMessage(
+      new TextEncoder().encode(JSON.stringify({type:'forceMute',value:allMuted})), true);
+  }catch(e){ console.warn('forceMute broadcast failed:', e); }
+  const b=document.getElementById('mute-all-btn');
+  b.textContent = allMuted ? '🔊 Stummschaltung aufheben' : '🔇 Alle stummschalten';
+  b.classList.toggle('active',allMuted);
+});
+
+document.getElementById('btn-cam').addEventListener('click',async()=>{
+  if(!localVideo)return;
+  camOff=!camOff; await localVideo.setEnabled(!camOff);
+  const b=document.getElementById('btn-cam');
+  b.querySelector('span').textContent=camOff?'Cam aus':'Kamera';
+  b.classList.toggle('off',camOff);
+});
+
+document.getElementById('btn-audiomode').addEventListener('click',()=>{
+  spatialMode=!spatialMode;
+  const b=document.getElementById('btn-audiomode');
+  b.querySelector('span').textContent=spatialMode?'Räumlich':'Gleich laut';
+  b.classList.toggle('str',!spatialMode);
+});
+
+document.getElementById('btn-tactical').addEventListener('click',()=>{
+  tacticalView=!tacticalView;
+  const b=document.getElementById('btn-tactical');
+  b.querySelector('span').textContent=tacticalView?'Normale Ansicht':'Taktische Ansicht';
+  b.classList.toggle('str',tacticalView);
+});
+
+function renderVolPanel() {
+  const list = document.getElementById('vol-list');
+  const entries = Object.entries(users).filter(([,u])=>!u.isLocal);
+  if (!entries.length) { list.innerHTML = '<div class="vol-empty">Niemand sonst im Raum</div>'; return; }
+  list.innerHTML = '';
+  entries.forEach(([uid,u])=>{
+    const pct = Math.round((u.volume ?? 1) * 100);
+    const row = document.createElement('div');
+    row.className = 'vol-row';
+    const label = document.createElement('div');
+    label.className = 'vol-label';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = (u.name || 'User') + ' #' + String(uid).slice(-4);
+    const pctSpan = document.createElement('span');
+    pctSpan.textContent = pct + '%';
+    label.appendChild(nameSpan); label.appendChild(pctSpan);
+    const slider = document.createElement('input');
+    slider.type='range'; slider.min='0'; slider.max='200'; slider.value=String(pct);
+    slider.addEventListener('input', ()=>{
+      setUserVolume(uid, slider.value/100);
+      pctSpan.textContent = slider.value + '%';
+    });
+    row.appendChild(label); row.appendChild(slider);
+    list.appendChild(row);
+  });
+}
+document.getElementById('btn-vol').addEventListener('click',()=>{
+  const panel=document.getElementById('vol-panel');
+  if (panel.style.display==='block') { panel.style.display='none'; }
+  else { renderVolPanel(); panel.style.display='block'; }
+});
+
+document.getElementById('btn-music').addEventListener('click',toggleStream);
+document.getElementById('share-btn').addEventListener('click',toggleStream);
+
+// Recently-used maps/tokens, so the DM isn't re-uploading the same goblin
+// token every session — Cloudinary keeps the file forever either way, this
+// just remembers the URL (and, for tokens, the category/size) locally.
+const RECENT_KEY = 'fantasyRoomRecentUploads';
+function loadRecent() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || {maps:[], tokens:[]}; }
+  catch(e) { return {maps:[], tokens:[]}; }
+}
+function saveRecent(data) {
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(data)); } catch(e) {}
+}
+function addRecentMap(url) {
+  const data=loadRecent();
+  data.maps=[{url}, ...data.maps.filter(m=>m.url!==url)].slice(0,8);
+  saveRecent(data); renderRecentMaps();
+}
+function addRecentToken(url, category, size) {
+  const data=loadRecent();
+  data.tokens=[{url,category,size}, ...data.tokens.filter(t=>t.url!==url)].slice(0,12);
+  saveRecent(data); renderRecentTokens();
+}
+function renderRecentMaps() {
+  const el=document.getElementById('map-recent');
+  if(!el) return;
+  el.innerHTML='';
+  loadRecent().maps.forEach(m=>{
+    const img=document.createElement('img');
+    img.src=m.url; img.className='recent-thumb'; img.title='Erneut verwenden';
+    img.addEventListener('click', async()=>{
+      setBattleMap(m.url);
+      await broadcastMap(m.url);
+      document.getElementById('map-stat').textContent='▶ Karte aktiv';
+      document.getElementById('map-stat').className='mstat on';
+      document.getElementById('map-clear-btn').style.display='block';
+    });
+    el.appendChild(img);
+  });
+}
+function renderRecentTokens() {
+  const el=document.getElementById('token-recent');
+  if(!el) return;
+  el.innerHTML='';
+  loadRecent().tokens.forEach(t=>{
+    const img=document.createElement('img');
+    img.src=t.url; img.className='recent-thumb'; img.title='Erneut hinzufügen';
+    img.addEventListener('click', ()=>{
+      const id=Date.now()+'-'+Math.floor(Math.random()*1e6);
+      const u=0.5+(Math.random()-0.5)*0.1, v=0.5+(Math.random()-0.5)*0.1;
+      addToken(id, t.url, u, v, t.category, t.size, true);
+    });
+    el.appendChild(img);
+  });
+}
+
+document.getElementById('map-upload-btn').addEventListener('click',()=>{
+  document.getElementById('map-file').click();
+});
+document.getElementById('map-file').addEventListener('change', async(e)=>{
+  const file=e.target.files[0];
+  e.target.value=''; // allow re-selecting the same file next time
+  if(!file) return;
+  const stat=document.getElementById('map-stat');
+  stat.textContent='Lädt hoch…'; stat.className='mstat';
+  try{
+    const url=await uploadImage(file);
+    setBattleMap(url);
+    await broadcastMap(url);
+    addRecentMap(url);
+    stat.textContent='▶ Karte aktiv'; stat.className='mstat on';
+    document.getElementById('map-clear-btn').style.display='block';
+  }catch(err){
+    console.warn('map upload failed:', err);
+    stat.textContent='Fehler beim Hochladen'; stat.className='mstat';
+  }
+});
+document.getElementById('map-clear-btn').addEventListener('click', async()=>{
+  setBattleMap(null);
+  await broadcastMap(null);
+  document.getElementById('map-stat').textContent='Keine Karte aktiv';
+  document.getElementById('map-stat').className='mstat';
+  document.getElementById('map-clear-btn').style.display='none';
+});
+
+document.getElementById('token-add-btn').addEventListener('click',()=>{
+  document.getElementById('token-file').click();
+});
+document.getElementById('token-file').addEventListener('change', async(e)=>{
+  const file=e.target.files[0];
+  e.target.value='';
+  if(!file) return;
+  try{
+    const url=await uploadImage(file);
+    const id=Date.now()+'-'+Math.floor(Math.random()*1e6);
+    const u=0.5+(Math.random()-0.5)*0.1, v=0.5+(Math.random()-0.5)*0.1;
+    const category=document.getElementById('token-category').value;
+    const size=document.getElementById('token-size').value;
+    addToken(id, url, u, v, category, size, true);
+    addRecentToken(url, category, size);
+  }catch(err){
+    console.warn('token upload failed:', err);
+  }
+});
+
+document.getElementById('btn-leave').addEventListener('click',async()=>{
+  try{
+    if(localAudio){localAudio.stop();localAudio.close();}
+    if(localVideo){localVideo.stop();localVideo.close();}
+    if(screenAudio){screenAudio.stop();screenAudio.close();}
+    if(musicClient) await musicClient.leave();
+    if(agoraClient) await agoraClient.leave();
+  }catch(_){}
+  location.reload();
+});
+
+document.getElementById('tta-btn').addEventListener('click',()=>{
+  const u=document.getElementById('tta-url').value.trim(); if(!u)return;
+  document.getElementById('tta-frame').src=u;
+  document.getElementById('tta-wrap').style.display='block';
+});
+
+document.getElementById('sp-btn').addEventListener('click',()=>{
+  let u=document.getElementById('sp-url').value.trim(); if(!u)return;
+  if(u.includes('open.spotify.com')&&!u.includes('/embed'))
+    u=u.replace('open.spotify.com/','open.spotify.com/embed/');
+  document.getElementById('sp-frame').src=u;
+  document.getElementById('sp-wrap').style.display='block';
+});
+
+['f-appid','f-room','f-token'].forEach(id=>{
+  document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('join-btn').click();});
+});
+</script>
+</body>
+</html>
