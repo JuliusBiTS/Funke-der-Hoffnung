@@ -115,6 +115,29 @@ body.locked #crosshair{opacity:1}
 #focus-label{position:absolute;top:8px;left:8px;background:rgba(2,4,12,.75);color:#e0b84c;font-family:var(--fm);font-size:10px;letter-spacing:2px;text-transform:uppercase;padding:4px 8px}
 .focus-hint{position:absolute;bottom:8px;right:8px;background:rgba(2,4,12,.75);color:rgba(224,184,76,.7);font-family:var(--fm);font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:4px 8px}
 
+/* CAMERA GALLERY — small always-on strip everyone can glance at (no need
+   to physically turn toward each avatar), expandable into a full grid.
+   Opt-in/out is per-person and local only; it never changes what anyone
+   else sees. */
+#pip-strip{position:fixed;bottom:24px;right:24px;display:flex;gap:6px;z-index:205;pointer-events:none}
+.pip-tile{position:relative;width:76px;height:57px;background:#111;border:1px solid rgba(224,184,76,.35);overflow:hidden;pointer-events:auto;cursor:pointer;transition:border-color .15s}
+.pip-tile:hover{border-color:var(--c)}
+.pip-tile.speaking{border-color:var(--g);box-shadow:0 0 10px rgba(62,207,110,.5)}
+.pip-tile video{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.pip-name{position:absolute;left:0;right:0;bottom:0;font-size:8px;letter-spacing:1px;color:#fff;background:rgba(0,0,0,.55);padding:2px 4px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+#pip-close{position:absolute;top:-8px;right:-8px;width:17px;height:17px;border-radius:50%;background:rgba(2,4,12,.92);border:1px solid rgba(224,184,76,.4);color:rgba(224,184,76,.8);font-size:11px;line-height:15px;text-align:center;cursor:pointer;pointer-events:auto}
+#pip-close:hover{border-color:var(--r);color:var(--r)}
+
+#gallery-panel{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;z-index:220;background:rgba(2,4,12,.88)}
+#gallery-close-hint{font-size:10px;letter-spacing:2px;color:rgba(224,184,76,.55);text-transform:uppercase;margin-bottom:16px}
+#gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;max-width:920px;padding:0 24px}
+.gal-tile{position:relative;background:#111;border:1px solid rgba(224,184,76,.3);cursor:pointer;transition:border-color .15s}
+.gal-tile:hover{border-color:var(--c)}
+.gal-tile.speaking{border-color:var(--g);box-shadow:0 0 16px rgba(62,207,110,.5)}
+.gal-tile video{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;pointer-events:none}
+.gal-name{padding:7px 10px;font-size:11px;letter-spacing:1px;color:var(--c);text-transform:uppercase}
+#gallery-empty{color:rgba(224,184,76,.5);font-size:12px;letter-spacing:2px;text-transform:uppercase}
+
 canvas{display:block}
 </style>
 </head>
@@ -176,6 +199,7 @@ canvas{display:block}
   <button class="cb" id="btn-audiomode" title="Zwischen räumlichem Klang und gleicher Lautstärke für alle wechseln">🎧 <span>Räumlich</span></button>
   <button class="cb" id="btn-tactical" title="Taktische Draufsicht auf den Kampftisch">🗺 <span>Taktische Ansicht</span></button>
   <button class="cb" id="btn-vol" title="Lautstärke einzelner Personen anpassen">🔊 <span>Lautstärke</span></button>
+  <button class="cb" id="btn-gallery" title="Alle Kameras auf einen Blick (Hotkey: G)">🖼 <span>Galerie</span></button>
   <div class="cb-sep"></div>
   <button class="cb dm" id="btn-music" style="display:none">🎵 <span>Musik</span></button>
   <div class="cb-sep" id="sep-dm" style="display:none"></div>
@@ -185,6 +209,13 @@ canvas{display:block}
 <div id="vol-panel" style="display:none">
   <div class="vol-head">🔊 Lautstärke</div>
   <div id="vol-list"></div>
+</div>
+
+<div id="pip-strip" style="display:none"></div>
+
+<div id="gallery-panel" style="display:none">
+  <div id="gallery-close-hint">Klick daneben, G oder ESC zum Schließen</div>
+  <div id="gallery-grid"></div>
 </div>
 
 <div id="gm" style="display:none">
@@ -322,6 +353,18 @@ const tokenRaycaster = new THREE.Raycaster();
 // that same shared 3D object from a different distance.
 let focusedUid = null;
 
+// ══════════ CAMERA GALLERY ══════════
+// A small always-on strip of everyone's camera, expandable into a full
+// grid — lets the DM (or anyone) keep track of reactions across several
+// players without physically turning to face each avatar in turn. Purely
+// client-side, reuses the same videoEl each user already has for the
+// focus-view feature above. Opt-out is per-person and local (localStorage),
+// never broadcast — it only changes what that one person sees.
+const PIP_KEY = 'fantasyRoomPipEnabled';
+let pipEnabled = localStorage.getItem(PIP_KEY) !== 'false'; // on by default
+let galleryOpen = false;
+let speakingUids = new Set(); // uids (as strings) Agora currently reports as talking
+
 // player
 const playerPos = new THREE.Vector3(0, EYE_H, 3.2);
 let   yaw = Math.PI, pitch = -0.05;
@@ -423,6 +466,12 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyM' && isLocked && isDM) {
     document.getElementById('mute-all-btn').click();
   }
+  // Gallery hotkey — available to everyone, same reasoning as the M
+  // shortcut: click the real button rather than duplicate its logic.
+  if (e.code === 'KeyG' && isLocked) {
+    document.getElementById('btn-gallery').click();
+  }
+  if (e.code === 'Escape') closeGallery(); // harmless no-op if it's not open
 });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
 
@@ -1289,6 +1338,91 @@ function setFocus(uid) {
   wrap.style.display='block';
 }
 
+// Only remote users currently streaming video are worth a tile — someone
+// on mic-only has nothing to show, and (matching setFocus above) that's
+// not worth a dedicated empty-state placeholder.
+function galleryEntries() {
+  return Object.entries(users).filter(([,u]) => !u.isLocal && u.videoEl);
+}
+
+function makeGalleryVideo(u) {
+  const vid=document.createElement('video');
+  vid.autoplay=true; vid.muted=true; vid.playsInline=true;
+  vid.srcObject=u.videoEl.srcObject;
+  vid.play().catch(()=>{});
+  return vid;
+}
+
+function renderPip() {
+  const strip=document.getElementById('pip-strip');
+  const entries=galleryEntries();
+  if (!pipEnabled || !entries.length) { strip.style.display='none'; return; }
+  strip.innerHTML='';
+  entries.forEach(([uid,u])=>{
+    const tile=document.createElement('div');
+    tile.className='pip-tile'+(speakingUids.has(String(uid))?' speaking':'');
+    tile.dataset.uid=uid;
+    const name=document.createElement('div');
+    name.className='pip-name'; name.textContent=u.name||'Spieler';
+    tile.appendChild(makeGalleryVideo(u)); tile.appendChild(name);
+    tile.addEventListener('click', openGallery);
+    strip.appendChild(tile);
+  });
+  const closeBtn=document.createElement('div');
+  closeBtn.id='pip-close'; closeBtn.textContent='×';
+  closeBtn.title='Kamera-Galerie für mich deaktivieren';
+  closeBtn.addEventListener('click', e=>{ e.stopPropagation(); disablePip(); });
+  strip.appendChild(closeBtn);
+  strip.style.display='flex';
+}
+
+// Local, per-person opt-out — deliberately never broadcast. Someone
+// finding this distracting shouldn't have to convince anyone else to
+// turn it off, and it shouldn't be possible to turn it off FOR someone
+// else either.
+function disablePip() {
+  pipEnabled=false;
+  localStorage.setItem(PIP_KEY,'false');
+  closeGallery();
+  renderPip();
+}
+
+// The gallery button/hotkey doubles as "turn it back on" — always re-
+// enables pipEnabled, so opting out from the small × is never a dead end.
+function openGallery() {
+  pipEnabled=true;
+  localStorage.setItem(PIP_KEY,'true');
+  galleryOpen=true;
+  renderGallery();
+  document.getElementById('gallery-panel').style.display='flex';
+  renderPip();
+}
+
+function closeGallery() {
+  if (!galleryOpen) return;
+  galleryOpen=false;
+  document.getElementById('gallery-panel').style.display='none';
+}
+
+function renderGallery() {
+  const grid=document.getElementById('gallery-grid');
+  const entries=galleryEntries();
+  grid.innerHTML='';
+  if (!entries.length) { grid.innerHTML='<div id="gallery-empty">Niemand mit Kamera im Raum</div>'; return; }
+  entries.forEach(([uid,u])=>{
+    const tile=document.createElement('div');
+    tile.className='gal-tile'+(speakingUids.has(String(uid))?' speaking':'');
+    tile.dataset.uid=uid;
+    const name=document.createElement('div');
+    name.className='gal-name'; name.textContent=u.name||'Spieler';
+    tile.appendChild(makeGalleryVideo(u)); tile.appendChild(name);
+    // Jump into the closer single-person focus view on click — gallery
+    // for overview, focus for detail, no separate video pipeline needed.
+    tile.addEventListener('click', ()=>{ closeGallery(); setFocus(uid); });
+    grid.appendChild(tile);
+  });
+}
+
 // ══════════ SPATIAL AUDIO ══════════
 function ensureACtx() {
   if (!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
@@ -1617,6 +1751,17 @@ async function initAgora(appId, room, myName, asDM, token) {
   joinedAppId=appId; joinedRoom=room; joinedToken=token||null; // needed later if the DM starts sharing music
   agoraClient=AgoraRTC.createClient({mode:'rtc',codec:'vp8'});
 
+  // Drives the speaking-highlight border in the gallery/PiP tiles — updates
+  // the DOM directly rather than re-rendering, since this fires a few
+  // times a second and a full rebuild would be wasteful for a class toggle.
+  agoraClient.enableAudioVolumeIndicator();
+  agoraClient.on('volume-indicator', volumes => {
+    speakingUids = new Set(volumes.filter(v=>v.level>15).map(v=>String(v.uid)));
+    document.querySelectorAll('.pip-tile,.gal-tile').forEach(el=>{
+      el.classList.toggle('speaking', speakingUids.has(el.dataset.uid));
+    });
+  });
+
   agoraClient.on('user-published', async (ru, mediaType) => {
     try {
       await agoraClient.subscribe(ru, mediaType);
@@ -1667,6 +1812,7 @@ async function initAgora(appId, room, myName, asDM, token) {
         });
       }
       if (document.getElementById('vol-panel').style.display==='block') renderVolPanel();
+      renderPip();
     }
     if (mediaType==='video') {
       users[uid].videoTrack=ru.videoTrack;
@@ -1678,6 +1824,7 @@ async function initAgora(appId, room, myName, asDM, token) {
         attachVideoToAvatar(users[uid],vel);
         users[uid].videoEl=vel; // reused directly for the focus overlay, not just the 3D texture
         if (focusedUid===uid) setFocus(uid); // picture up mid-focus if their video just (re)connected
+        renderPip(); if (galleryOpen) renderGallery(); // this user's tile only exists once videoEl is set
       } catch(e){}
     }
     if (mediaType==='audio') {
@@ -1742,6 +1889,7 @@ async function initAgora(appId, room, myName, asDM, token) {
     }
     if(document.getElementById('vol-panel').style.display==='block') renderVolPanel();
     if(focusedUid===ru.uid) setFocus(null); // don't leave a frozen video of someone who just left
+    renderPip(); if (galleryOpen) renderGallery();
   });
 
   agoraClient.on('stream-message',(uid,data)=>{
@@ -2046,6 +2194,15 @@ document.getElementById('btn-vol').addEventListener('click',()=>{
   const panel=document.getElementById('vol-panel');
   if (panel.style.display==='block') { panel.style.display='none'; }
   else { renderVolPanel(); panel.style.display='block'; }
+});
+
+document.getElementById('btn-gallery').addEventListener('click',()=>{
+  if (galleryOpen) closeGallery(); else openGallery();
+});
+// Click the dark backdrop (not a tile) to close, same as clicking outside
+// any other panel would be expected to do.
+document.getElementById('gallery-panel').addEventListener('click',e=>{
+  if (e.target.id==='gallery-panel'||e.target.id==='gallery-close-hint') closeGallery();
 });
 
 document.getElementById('btn-music').addEventListener('click',toggleStream);
