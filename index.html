@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Astralkompass-Akademie // Sternenhof</title>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<title>Funke der Hoffnung // Sitzungsraum</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.2.js"></script>
 <style>
@@ -22,9 +22,11 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
 .jbox{width:440px;border:1px solid rgba(224,184,76,0.4);background:var(--card);padding:44px 40px;position:relative;box-shadow:0 0 60px rgba(224,184,76,0.08)}
 .jbox::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--c),transparent)}
 .jlogo{text-align:center;margin-bottom:36px}
-.jlogo-t{font-family:var(--fd);font-size:22px;font-weight:900;letter-spacing:5px;color:var(--c);text-shadow:0 0 30px var(--c)}
-.jlogo-t2{font-family:var(--fd);font-size:13px;font-weight:700;letter-spacing:9px;color:var(--m);margin-top:4px;text-transform:uppercase}
-.jlogo-s{font-size:11px;letter-spacing:3px;color:rgba(224,184,76,0.35);margin-top:10px;text-transform:uppercase}
+/* Matches the group's actual wordmark (blackletter title, italic serif
+   tagline) — deliberately its own typographic moment, distinct from the
+   uppercase/wide-tracking UI chrome used everywhere else in the room. */
+.jlogo-t{font-family:'UnifrakturMaguntia',var(--fd);font-size:34px;font-weight:400;letter-spacing:1px;color:var(--c);text-shadow:0 0 30px var(--c);line-height:1.3}
+.jlogo-s{font-family:var(--fm);font-style:italic;font-size:13px;letter-spacing:1px;color:rgba(224,184,76,0.45);margin-top:10px}
 .fg{margin-bottom:16px}
 .fl{display:block;font-size:9px;letter-spacing:3px;color:rgba(224,184,76,0.5);margin-bottom:6px;text-transform:uppercase}
 .fi{width:100%;background:rgba(0,0,0,0.35);border:1px solid rgba(224,184,76,0.22);color:var(--c);font-family:var(--fm);font-size:15px;padding:10px 14px;outline:none;transition:border-color .2s,box-shadow .2s}
@@ -74,6 +76,13 @@ body.locked #crosshair{opacity:1}
 .vol-label{font-size:10px;letter-spacing:1px;color:rgba(224,184,76,.7);margin-bottom:4px;text-transform:uppercase;display:flex;justify-content:space-between}
 .vol-row input[type=range]{width:100%;accent-color:#e0b84c}
 .vol-empty{padding:14px;font-size:10px;color:rgba(224,184,76,.4);text-align:center}
+
+/* WHISPER PANEL — reuses .vol-head/.vol-empty, own row style since rows
+   here are just a name to click, not a name + slider */
+#whisper-panel{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);width:220px;background:rgba(2,4,12,.97);border:1px solid rgba(224,184,76,.28);z-index:200;backdrop-filter:blur(10px);max-height:280px;overflow-y:auto}
+.whisper-row{padding:10px 14px;font-size:12px;letter-spacing:1px;color:rgba(224,184,76,.8);border-bottom:1px solid rgba(224,184,76,.08);cursor:pointer;text-transform:uppercase;transition:background .15s,color .15s}
+.whisper-row:last-child{border-bottom:none}
+.whisper-row:hover{background:rgba(224,184,76,.12);color:var(--c)}
 
 /* DM PANEL */
 #gm{position:fixed;right:24px;top:70px;width:270px;background:rgba(8,14,22,.97);border:1px solid rgba(58,160,196,.28);z-index:200;backdrop-filter:blur(10px)}
@@ -146,9 +155,8 @@ canvas{display:block}
 <div id="join-overlay">
   <div class="jbox">
     <div class="jlogo">
-      <div class="jlogo-t">ASTRALKOMPASS</div>
-      <div class="jlogo-t2">Akademie</div>
-      <div class="jlogo-s">Sternenhof · Arkane Verbindung</div>
+      <div class="jlogo-t">Funke der Hoffnung</div>
+      <div class="jlogo-s">für andere</div>
     </div>
     <div class="fg">
       <label class="fl" for="f-appid">Agora App-ID</label>
@@ -157,13 +165,18 @@ canvas{display:block}
     </div>
     <div class="fg">
       <label class="fl" for="f-room">Raum-Code</label>
-      <input class="fi" id="f-room" type="text" placeholder="sternenhof-sitzung-01" autocomplete="off"/>
+      <input class="fi" id="f-room" type="text" placeholder="funke-der-hoffnung-sitzung-01" autocomplete="off"/>
       <div class="fh">Alle Spieler müssen denselben Code eingeben</div>
     </div>
     <div class="fg">
       <label class="fl" for="f-token">Token (nur falls Projekt ein Zertifikat hat)</label>
       <input class="fi" id="f-token" type="text" placeholder="optional" autocomplete="off" spellcheck="false"/>
       <div class="fh">Agora-Konsole → Projekt → "Generate Temp Token" (mit UID 0, für diesen Raum-Code). Leer lassen, wenn das Projekt kein Zertifikat hat.</div>
+    </div>
+    <div class="fg">
+      <label class="fl" for="f-name">Dein Name</label>
+      <input class="fi" id="f-name" type="text" placeholder="z. B. dein Charaktername" autocomplete="off" maxlength="24"/>
+      <div class="fh">Wird für alle sichtbar (Namensschild, Lautstärke-Liste, Flüstern-Auswahl)</div>
     </div>
     <label class="dm-row">
       <input type="checkbox" id="f-isdm"/>
@@ -187,7 +200,7 @@ canvas{display:block}
 
 <div id="hud" style="display:none">
   <div>
-    <div class="hud-title">STERNENHOF</div>
+    <div class="hud-title">FUNKE DER HOFFNUNG</div>
     <div class="hud-room" id="hud-room">RAUM: —</div>
   </div>
   <div class="hud-hint">WASD Bewegen &nbsp;·&nbsp; Maus Umsehen &nbsp;·&nbsp; ESC Freigeben</div>
@@ -200,6 +213,7 @@ canvas{display:block}
   <button class="cb" id="btn-tactical" title="Taktische Draufsicht auf den Kampftisch">🗺 <span>Taktische Ansicht</span></button>
   <button class="cb" id="btn-vol" title="Lautstärke einzelner Personen anpassen">🔊 <span>Lautstärke</span></button>
   <button class="cb" id="btn-gallery" title="Alle Kameras auf einen Blick (Hotkey: G)">🖼 <span>Galerie</span></button>
+  <button class="cb" id="btn-whisper" title="Kurz privat mit einer Person sprechen, ohne die Gruppe abzulenken (Hotkey: T)">🤫 <span>Flüstern</span></button>
   <div class="cb-sep"></div>
   <button class="cb dm" id="btn-music" style="display:none">🎵 <span>Musik</span></button>
   <div class="cb-sep" id="sep-dm" style="display:none"></div>
@@ -209,6 +223,11 @@ canvas{display:block}
 <div id="vol-panel" style="display:none">
   <div class="vol-head">🔊 Lautstärke</div>
   <div id="vol-list"></div>
+</div>
+
+<div id="whisper-panel" style="display:none">
+  <div class="vol-head">🤫 Flüstern mit …</div>
+  <div id="whisper-list"></div>
 </div>
 
 <div id="pip-strip" style="display:none"></div>
@@ -365,6 +384,20 @@ let pipEnabled = localStorage.getItem(PIP_KEY) !== 'false'; // on by default
 let galleryOpen = false;
 let speakingUids = new Set(); // uids (as strings) Agora currently reports as talking
 
+// ══════════ WHISPER ══════════
+// A quick, low-friction private aside between two players — deliberately
+// NOT routed through the secret room, which is too heavyweight for "just
+// tell one person something for ten seconds." Client-side only: the raw
+// audio still technically reaches everyone (Agora has no per-recipient
+// routing in this setup), it's just muted locally for everyone except the
+// two people involved. That's a complete fit for the actual goal here
+// (don't distract the rest of the group), not an attempt at real secrecy.
+// Player-only by design — the DM asked for this specifically so players
+// can talk to each other without pulling the DM's attention, so the DM
+// neither sends nor receives whispers (see the isDM checks below).
+let whisperTarget = null;           // uid I'm currently whispering to, or null
+const activeWhispers = {};          // fromUid -> toUid, for whoever in the room is whispering right now
+
 // player
 const playerPos = new THREE.Vector3(0, EYE_H, 3.2);
 let   yaw = Math.PI, pitch = -0.05;
@@ -470,6 +503,10 @@ document.addEventListener('keydown', e => {
   // shortcut: click the real button rather than duplicate its logic.
   if (e.code === 'KeyG' && isLocked) {
     document.getElementById('btn-gallery').click();
+  }
+  // Whisper hotkey — player-only, mirrors the button being hidden for the DM.
+  if (e.code === 'KeyT' && isLocked && !isDM) {
+    document.getElementById('btn-whisper').click();
   }
   if (e.code === 'Escape') closeGallery(); // harmless no-op if it's not open
 });
@@ -1068,6 +1105,14 @@ async function broadcastToken(msg, reliable) {
   } catch(e) { console.warn('token broadcast failed:', e); }
 }
 
+async function broadcastWhisper(active, toUid) {
+  if (!agoraClient) return;
+  try {
+    await agoraClient.sendStreamMessage(
+      new TextEncoder().encode(JSON.stringify({type:'whisper', active, to: active?toUid:null})), true);
+  } catch(e) { console.warn('sendStreamMessage(whisper) failed:', e); }
+}
+
 // ══════════ SECRET ROOM ══════════
 // A hidden wing behind the library, reached through a gap carved into the
 // NE chamfer wall — a small violet chamber for two to talk unheard.
@@ -1310,8 +1355,24 @@ function makeAvatar(asDM) {
   edges.userData.bill = true;
   grp.add(edges);
 
+  // Whisper indicator — a small, deliberately unobtrusive icon above the
+  // head, shown only while this person is actively whispering to someone
+  // (see applyWhisperState/clearWhisperState). Not flashing or animated:
+  // the point is that it's noticeable if you look at them, not something
+  // that grabs attention across the room.
+  const wc=document.createElement('canvas'); wc.width=64; wc.height=64;
+  const wctx=wc.getContext('2d');
+  wctx.font='42px sans-serif'; wctx.textAlign='center'; wctx.textBaseline='middle';
+  wctx.fillText('🤫',32,36);
+  const whisperIcon=new THREE.Mesh(new THREE.PlaneGeometry(0.32,0.32),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(wc),transparent:true,side:THREE.DoubleSide}));
+  whisperIcon.position.y=2.05;
+  whisperIcon.userData.bill=true;
+  whisperIcon.visible=false;
+  grp.add(whisperIcon);
+
   scene.add(grp);
-  return { grp, vidMesh };
+  return { grp, vidMesh, whisperIcon };
 }
 
 function attachVideoToAvatar(user, videoEl) {
@@ -1536,6 +1597,42 @@ function setUserVolume(uid, vol) {
   if (!u) return;
   u.volume = vol;
   if (u.volGain && audioCtx) u.volGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
+}
+
+// Called on every client when `fromUid` starts whispering to `toUid`. What
+// happens locally depends entirely on who's listening:
+//  - the target hears fromUid at full volume, bypassing spatial distance
+//    entirely (crossfaded onto the same "flat" path normal calls use) —
+//    a whisper shouldn't go quiet just because you're not standing close.
+//  - everyone else has fromUid muted via volGain, deliberately NOT touching
+//    their remembered .volume so a DM's slider setting survives this.
+//  - fromUid's own audio needs no change — you don't hear your own mic
+//    played back through this graph.
+function applyWhisperState(fromUid, toUid) {
+  activeWhispers[fromUid] = toUid;
+  if (users[fromUid]?.whisperIcon) users[fromUid].whisperIcon.visible = true;
+  const u = users[fromUid];
+  if (!u || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  if (String(localUID) === String(toUid)) {
+    if (u.panGain) u.panGain.gain.setTargetAtTime(0, t, 0.05);
+    if (u.flatGain) u.flatGain.gain.setTargetAtTime(1, t, 0.05);
+  } else if (String(localUID) !== String(fromUid)) {
+    if (u.volGain) u.volGain.gain.setTargetAtTime(0, t, 0.05);
+  }
+}
+
+// Undoes applyWhisperState once fromUid stops whispering (or leaves).
+// Restoring is safe to call unconditionally for both branches above —
+// setPannerPos() recomputes the correct spatial/flat crossfade from
+// scratch, and volGain just goes back to whatever .volume already was.
+function clearWhisperState(fromUid) {
+  delete activeWhispers[fromUid];
+  if (users[fromUid]?.whisperIcon) users[fromUid].whisperIcon.visible = false;
+  const u = users[fromUid];
+  if (!u || !audioCtx) return;
+  setPannerPos(fromUid);
+  if (u.volGain) u.volGain.gain.setTargetAtTime(u.volume ?? 1, audioCtx.currentTime, 0.05);
 }
 
 function updateMusicIsolation() {
@@ -1792,14 +1889,14 @@ async function initAgora(appId, room, myName, asDM, token) {
     }
 
     if (!users[uid]) {
-      const {grp,vidMesh}=makeAvatar(false);
+      const {grp,vidMesh,whisperIcon}=makeAvatar(false);
       vidMesh.userData.uid = uid; // so a crosshair raycast hit can be traced back to a specific user
       // Use buffered position if we got pos before user-published
       const px = pendingPos[uid]?.x ?? (Math.random()-.5)*1.5;
       const pz = pendingPos[uid]?.z ?? (Math.random()-.5)*1.5;
       const pyaw = pendingPos[uid]?.yaw ?? 0;
       grp.position.set(px,0,pz);
-      users[uid]={name:'User-'+uid,grp,vidMesh,targetX:px,targetZ:pz,targetYaw:pyaw};
+      users[uid]={name:'User-'+uid,grp,vidMesh,whisperIcon,targetX:px,targetZ:pz,targetYaw:pyaw};
       delete pendingPos[uid];
       // A player who joins after the DM already set a map/tokens never
       // received those original broadcasts — Agora's data channel only
@@ -1890,6 +1987,11 @@ async function initAgora(appId, room, myName, asDM, token) {
     if(document.getElementById('vol-panel').style.display==='block') renderVolPanel();
     if(focusedUid===ru.uid) setFocus(null); // don't leave a frozen video of someone who just left
     renderPip(); if (galleryOpen) renderGallery();
+    // Their graph is already gone above — nothing to restore, just drop the
+    // bookkeeping. If THEY were my whisper target, don't sit toggled on
+    // whispering into the void.
+    delete activeWhispers[ru.uid];
+    if (String(whisperTarget)===String(ru.uid)) stopWhisper();
   });
 
   agoraClient.on('stream-message',(uid,data)=>{
@@ -1923,6 +2025,11 @@ async function initAgora(appId, room, myName, asDM, token) {
       }
       if(msg.type==='name'&&users[uid]){
         users[uid].name=msg.name;
+        users[uid].isDM=!!msg.isDM; // needed so the whisper target list can exclude the DM
+      }
+      if(msg.type==='whisper'){
+        if(msg.active) applyWhisperState(uid, msg.to);
+        else clearWhisperState(uid);
       }
       if(msg.type==='forceMute'){
         // Only players act on this — the DM never receives their own broadcast.
@@ -1966,10 +2073,10 @@ async function initAgora(appId, room, myName, asDM, token) {
   await agoraClient.publish(localVideo ? [localAudio,localVideo] : [localAudio]);
 
   // local avatar
-  const {grp,vidMesh}=makeAvatar(asDM);
+  const {grp,vidMesh,whisperIcon}=makeAvatar(asDM);
   grp.position.set(playerPos.x,0,playerPos.z);
   grp.visible=false;
-  users[localUID]={name:myName,grp,vidMesh,isLocal:true,isDM:asDM};
+  users[localUID]={name:myName,grp,vidMesh,whisperIcon,isLocal:true,isDM:asDM};
 
   try {
     const vel=document.createElement('video');
@@ -2069,11 +2176,13 @@ document.getElementById('join-btn').addEventListener('click', async()=>{
   const room=document.getElementById('f-room').value.trim();
   const token=document.getElementById('f-token').value.trim()||null;
   isDM=document.getElementById('f-isdm').checked;
-  const name=isDM?'DM':'Spieler';
+  const typedName=document.getElementById('f-name').value.trim();
+  const name=typedName||(isDM?'DM':'Spieler');
   const err=document.getElementById('jerr');
   if(appId.length<16){err.textContent='Bitte gültige Agora App-ID eingeben.';return;}
   if(!room){err.textContent='Bitte Raum-Code eingeben.';return;}
   err.textContent='';
+  if(typedName){ try{ localStorage.setItem(NAME_KEY,typedName); }catch(e){} }
   localName=name;
   const btn=document.getElementById('join-btn');
   btn.disabled=true; btn.textContent='Verbinde…';
@@ -2097,6 +2206,11 @@ document.getElementById('join-btn').addEventListener('click', async()=>{
       document.getElementById('btn-music').style.display='flex';
       document.getElementById('sep-dm').style.display='block';
       renderRecentMaps(); renderRecentTokens();
+      // Player-only feature — the DM asked for whispering specifically so
+      // players can have it without pulling them into it, so they don't
+      // get the button to send one and (via the target-list filter in
+      // renderWhisperList) can't be picked as a target either.
+      document.getElementById('btn-whisper').style.display='none';
     }
   }catch(e){
     console.error(e);
@@ -2194,6 +2308,48 @@ document.getElementById('btn-vol').addEventListener('click',()=>{
   const panel=document.getElementById('vol-panel');
   if (panel.style.display==='block') { panel.style.display='none'; }
   else { renderVolPanel(); panel.style.display='block'; }
+});
+
+// Player-only, so the DM never even sees the trigger to select a target —
+// see the WHISPER state comment above for why.
+function renderWhisperList() {
+  const list=document.getElementById('whisper-list');
+  const entries=Object.entries(users).filter(([,u])=>!u.isLocal && !u.isDM);
+  if (!entries.length) { list.innerHTML='<div class="vol-empty">Niemand sonst im Raum</div>'; return; }
+  list.innerHTML='';
+  entries.forEach(([uid,u])=>{
+    const row=document.createElement('div');
+    row.className='whisper-row';
+    row.textContent=u.name||'Spieler';
+    row.addEventListener('click', ()=>startWhisper(uid));
+    list.appendChild(row);
+  });
+}
+
+function startWhisper(targetUid) {
+  if (whisperTarget) stopWhisper(); // switching targets cleanly ends the old one first
+  whisperTarget=targetUid;
+  broadcastWhisper(true, targetUid);
+  document.getElementById('whisper-panel').style.display='none';
+  const btn=document.getElementById('btn-whisper');
+  btn.classList.add('str');
+  btn.querySelector('span').textContent='Flüstert: '+(users[targetUid]?.name||'Spieler');
+}
+
+function stopWhisper() {
+  if (!whisperTarget) return;
+  broadcastWhisper(false, whisperTarget);
+  whisperTarget=null;
+  const btn=document.getElementById('btn-whisper');
+  btn.classList.remove('str');
+  btn.querySelector('span').textContent='Flüstern';
+}
+
+document.getElementById('btn-whisper').addEventListener('click',()=>{
+  if (whisperTarget) { stopWhisper(); return; }
+  const panel=document.getElementById('whisper-panel');
+  if (panel.style.display==='block') { panel.style.display='none'; }
+  else { renderWhisperList(); panel.style.display='block'; }
 });
 
 document.getElementById('btn-gallery').addEventListener('click',()=>{
@@ -2336,9 +2492,17 @@ document.getElementById('sp-btn').addEventListener('click',()=>{
   document.getElementById('sp-wrap').style.display='block';
 });
 
-['f-appid','f-room','f-token'].forEach(id=>{
+['f-appid','f-room','f-token','f-name'].forEach(id=>{
   document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('join-btn').click();});
 });
+
+// Remember the last-used name so it isn't retyped every session — same
+// reasoning as remembering recent maps/tokens below.
+const NAME_KEY = 'fantasyRoomLastName';
+try{
+  const savedName=localStorage.getItem(NAME_KEY);
+  if(savedName) document.getElementById('f-name').value=savedName;
+}catch(e){}
 </script>
 </body>
 </html>
