@@ -45,6 +45,21 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
   #flash{display:none}
   #join-overlay.lit .jbox{animation:none;opacity:1;transform:none}
 }
+
+/* SELF-PREVIEW — check your own camera/mic before joining, so nobody
+   discovers mid-session that their camera was off the whole time. Opt-in
+   (a button, not automatic) so it never surprises anyone with a
+   permission prompt just for loading the page. */
+.pv-btn{width:100%;background:transparent;border:1px solid rgba(224,184,76,0.3);color:rgba(224,184,76,0.85);font-family:var(--fd);font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:10px;cursor:pointer;transition:all .2s;margin-bottom:12px}
+.pv-btn:hover{background:rgba(224,184,76,0.1);border-color:var(--c)}
+#preview-box{display:none;align-items:center;gap:12px;margin-bottom:12px;padding:10px;background:rgba(0,0,0,0.3);border:1px solid rgba(224,184,76,0.15)}
+#preview-video{width:96px;height:72px;object-fit:cover;background:#111;border:1px solid rgba(224,184,76,0.3);flex-shrink:0}
+.pv-meter-col{flex:1;display:flex;flex-direction:column;gap:7px;min-width:0}
+.pv-meter{width:100%;height:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(224,184,76,0.2);overflow:hidden}
+.pv-meter-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--g),var(--c));transition:width .08s linear}
+.pv-hint{font-size:9px;letter-spacing:1px;color:rgba(224,184,76,0.5);text-transform:uppercase}
+.pv-error{font-size:11px;color:var(--r);margin:-4px 0 12px}
+
 .jbox{width:440px;border:1px solid rgba(224,184,76,0.4);background:var(--card);padding:44px 40px;position:relative;box-shadow:0 0 60px rgba(224,184,76,0.08)}
 .jbox::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--c),transparent)}
 .jlogo{text-align:center;margin-bottom:36px}
@@ -83,6 +98,15 @@ body.locked #crosshair{opacity:1}
 .hud-title{font-family:var(--fd);font-size:15px;font-weight:900;letter-spacing:5px;color:var(--c);text-shadow:0 0 15px var(--c)}
 .hud-room{font-size:9px;letter-spacing:3px;color:rgba(224,184,76,.4);margin-top:3px}
 .hud-hint{text-align:right;font-size:9px;letter-spacing:2px;color:rgba(224,184,76,.3);line-height:1.9}
+
+/* DIAGNOSTICS — opt-in at connect, local-only, never broadcast. A rough
+   usage gauge against the free-tier ceiling, not real Agora billing data
+   (that needs the App Certificate, which can never live in this public
+   client-side file) — calibrated to what was actually observed, not a
+   guess, but still an estimate and labeled as one in the UI itself. */
+#diag{position:fixed;top:70px;left:24px;font-size:10px;letter-spacing:1px;color:rgba(224,184,76,.55);background:rgba(2,4,12,.75);border:1px solid rgba(224,184,76,.18);padding:8px 12px;z-index:200;pointer-events:none;line-height:1.7;font-variant-numeric:tabular-nums}
+#diag .d-warn{color:var(--r)}
+#diag .d-note{display:block;font-size:8px;letter-spacing:0.5px;color:rgba(224,184,76,.35);margin-top:2px}
 
 /* CONTROLS */
 #ctrl{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:rgba(2,4,12,.95);border:1px solid rgba(224,184,76,.2);padding:10px 16px;z-index:200;backdrop-filter:blur(10px)}
@@ -215,6 +239,20 @@ canvas{display:block}
       <span class="tpill"></span>
       <span class="dlabel">DM-Zugang</span>
     </label>
+    <label class="dm-row">
+      <input type="checkbox" id="f-diag"/>
+      <span class="tpill"></span>
+      <span class="dlabel">Diagnose-Overlay (nur für dich sichtbar)</span>
+    </label>
+    <button class="pv-btn" id="preview-btn" type="button">🎥 Kamera &amp; Mikrofon testen</button>
+    <div id="preview-box">
+      <video id="preview-video" autoplay muted playsinline></video>
+      <div class="pv-meter-col">
+        <div class="pv-meter"><div class="pv-meter-fill" id="pv-meter-fill"></div></div>
+        <div class="pv-hint">Sprich kurz — der Balken sollte sich bewegen</div>
+      </div>
+    </div>
+    <div class="pv-error" id="pv-error"></div>
     <div id="jerr">&nbsp;</div>
     <button class="jbtn" id="join-btn">▶ VERBINDEN</button>
   </div>
@@ -237,6 +275,8 @@ canvas{display:block}
   </div>
   <div class="hud-hint">WASD Bewegen &nbsp;·&nbsp; Maus Umsehen &nbsp;·&nbsp; ESC Freigeben</div>
 </div>
+
+<div id="diag" style="display:none"></div>
 
 <div id="ctrl" style="display:none">
   <button class="cb" id="btn-mic">🎤 <span>Mic</span></button>
@@ -416,6 +456,110 @@ canvas{display:block}
   });
   if(reduced) ignite();
 })();
+
+// ══════════ SELF-PREVIEW ══════════
+// Check your own camera/mic before joining — opt-in via a button, not
+// automatic, so loading the page never triggers a surprise permission
+// prompt. Releases the device the instant the real join starts, so
+// Agora's own getUserMedia call isn't fighting this one for the camera.
+(function(){
+  const btn=document.getElementById('preview-btn');
+  const box=document.getElementById('preview-box');
+  const video=document.getElementById('preview-video');
+  const meterFill=document.getElementById('pv-meter-fill');
+  const errEl=document.getElementById('pv-error');
+  let stream=null, ac=null, analyser=null, rafId=null, active=false;
+
+  function stopPreview(){
+    if(rafId!==null){ cancelAnimationFrame(rafId); rafId=null; }
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+    if(ac){ ac.close().catch(()=>{}); ac=null; }
+    analyser=null;
+    video.srcObject=null;
+    box.style.display='none';
+    btn.textContent='🎥 Kamera & Mikrofon testen';
+    active=false;
+  }
+
+  function meterTick(){
+    if(!analyser) return;
+    const data=new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(data);
+    let sum=0; for(let i=0;i<data.length;i++) sum+=data[i];
+    const avg=sum/data.length;
+    // Raw frequency-domain average reads quiet for normal speaking volume —
+    // scaled up so the bar actually moves visibly instead of sitting near 0.
+    meterFill.style.width=Math.min(100,(avg/255)*100*2.2)+'%';
+    rafId=requestAnimationFrame(meterTick);
+  }
+
+  btn.addEventListener('click', async()=>{
+    if(active){ stopPreview(); return; }
+    errEl.textContent='';
+    btn.disabled=true; btn.textContent='Wird angefragt…';
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+      video.srcObject=stream;
+      ac=new (window.AudioContext||window.webkitAudioContext)();
+      const src=ac.createMediaStreamSource(stream);
+      analyser=ac.createAnalyser();
+      analyser.fftSize=256;
+      src.connect(analyser);
+      box.style.display='flex';
+      btn.textContent='Vorschau beenden';
+      active=true;
+      meterTick();
+    }catch(e){
+      errEl.textContent='Kamera/Mikrofon nicht verfügbar: '+(e.message||'Zugriff verweigert');
+      btn.textContent='🎥 Kamera & Mikrofon testen';
+    }
+    btn.disabled=false;
+  });
+
+  // Capture phase so this always fires before the join handler starts
+  // acquiring media, regardless of where either listener is registered.
+  document.getElementById('join-btn').addEventListener('click', stopPreview, {capture:true});
+})();
+
+// ══════════ DIAGNOSTICS ══════════
+// Opt-in, local-only usage gauge — explicitly NOT real Agora billing data,
+// since that requires the App Certificate, a secret that can never live in
+// this public client-side file. Calibrated to an actual observed data
+// point instead of Agora's published formula: testing with 4 people for
+// ~4 hours burned the entire 10,000-minute free tier, implying roughly
+// 10.4 quota-minutes consumed per real person-minute (almost certainly
+// because Agora meters audio and video as separate streams, not raw
+// wall-clock time). One data point, not a spec — treat the estimate as a
+// pace gauge, not a guarantee, which is also spelled out in the overlay
+// itself so the caveat travels with the number.
+const AGORA_FREE_MINUTES = 10000;
+const AGORA_QUOTA_MULTIPLIER = 10000 / (4*4*60); // ≈10.42 — from last week's 4-person/4-hour test
+
+function startDiagnostics() {
+  const el=document.getElementById('diag');
+  el.style.display='block';
+  const startMs=Date.now();
+  let personMinutes=0;
+  function fmt(totalSec){
+    const h=Math.floor(totalSec/3600), m=Math.floor((totalSec%3600)/60), s=Math.floor(totalSec%60);
+    return (h>0?h+':':'')+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  }
+  function tick(){
+    const elapsedSec=(Date.now()-startMs)/1000;
+    const count=Object.keys(users).length;
+    personMinutes += count/60; // ticks once/sec, so this adds count/60 person-minutes per tick
+    const estUsed=personMinutes*AGORA_QUOTA_MULTIPLIER;
+    const estRemaining=Math.max(0,AGORA_FREE_MINUTES-estUsed);
+    const warn=estRemaining<500;
+    el.innerHTML=
+      'Sitzung: '+fmt(elapsedSec)+' · '+count+' Teilnehmer<br>'+
+      'Verbraucht (geschätzt): '+Math.round(estUsed)+' / '+AGORA_FREE_MINUTES+' Min.<br>'+
+      '<span'+(warn?' class="d-warn"':'')+'>Rest (geschätzt): '+Math.round(estRemaining)+' Min.</span>'+
+      '<span class="d-note">Schätzung aus Dauer × Teilnehmerzahl, kalibriert an letzter Woche — keine echten Agora-Daten</span>';
+  }
+  tick();
+  setInterval(tick,1000);
+}
 
 // ══════════ CONSTANTS ══════════
 const MOVE_SPEED   = 3.2;
@@ -2327,6 +2471,7 @@ document.getElementById('join-btn').addEventListener('click', async()=>{
   const room=document.getElementById('f-room').value.trim();
   const token=document.getElementById('f-token').value.trim()||null;
   isDM=document.getElementById('f-isdm').checked;
+  const diagEnabled=document.getElementById('f-diag').checked;
   const typedName=document.getElementById('f-name').value.trim();
   const name=typedName||(isDM?'DM':'Spieler');
   const err=document.getElementById('jerr');
@@ -2345,6 +2490,7 @@ document.getElementById('join-btn').addEventListener('click', async()=>{
     document.getElementById('hud').style.display='flex';
     document.getElementById('ctrl').style.display='flex';
     document.getElementById('hud-room').textContent='RAUM: '+room.toUpperCase();
+    if(diagEnabled) startDiagnostics();
     if(!localVideo){
       // Mic-only fallback kicked in — the camera button would otherwise be a dead click.
       const camBtn=document.getElementById('btn-cam');
