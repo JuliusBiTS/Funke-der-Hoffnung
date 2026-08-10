@@ -1006,7 +1006,7 @@ let   velY = 0;
 const GRAVITY = -18;
 const JUMP_FORCE = 6;
 const DM_JUMP_FORCE = 8;         // the DM jumps noticeably higher — a small visible flourish that's theirs alone
-const DM_GLIDE_GRAVITY_MULT = 0.18; // holding Space while airborne slows the DM's fall to a glide; everyone else free-falls normally
+const DM_GLIDE_GRAVITY_MULT = 0.045; // holding Space while airborne slows the DM's fall to a slow, deliberate, "epic" descent; everyone else free-falls normally
 
 const BALL_RADIUS = 0.18;
 const BALL_INTERACT_RANGE = 1.8; // how close you need to be to see the prompt and act on it
@@ -1141,12 +1141,17 @@ document.addEventListener('keydown', e => {
   // this one's meant to be a quick "walk up and swat it" action.
   if (e.code === 'KeyE' && isLocked && ball.mesh && !ballDeleted) {
     if (ball.holder === localUID) {
-      // Pure look-direction throw — no added upward bias, so aiming
-      // straight up actually sends it straight up instead of the camera
-      // angle just nudging a mostly-fixed arc.
+      // Look-direction throw, with the vertical component boosted rather
+      // than left 1:1 with the horizontal — a pure direction*speed throw
+      // is technically correct (upward pitch does add positive vy) but at
+      // these speeds/gravity the resulting arc is too subtle to actually
+      // read as "up" before it's already arced back down and rolling
+      // forward. Only kicks in once you're aiming upward at all (dir.y>0),
+      // so a level or downward throw is completely unaffected.
       const dir=new THREE.Vector3(); camera.getWorldDirection(dir);
+      const vertBoost = 1 + Math.max(0,dir.y)*1.6;
       ball.vx = dir.x*BALL_THROW_SPEED;
-      ball.vy = dir.y*BALL_THROW_SPEED;
+      ball.vy = dir.y*BALL_THROW_SPEED*vertBoost;
       ball.vz = dir.z*BALL_THROW_SPEED;
       ball.holder = null;
       ball.ownedByMe = true;
@@ -1465,16 +1470,21 @@ function buildBookshelf(x,z,ry,width,bookStart) {
     new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c)}));
   face.position.set(0,1.15,0.16); grp.add(face);
 
-  // Three real, readable books per shelf, standing proud of the
-  // decorative spine wallpaper above so they read as "pull these ones
-  // out," not just more painted-on clutter.
-  [[-0.5,0.95],[0,1.45],[0.5,1.95]].forEach(([bx,by],i)=>{
+  // Three real, readable books per shelf — standing with their bottom
+  // edge actually resting on a shelf plank, like real books, rather than
+  // floating at the same height as the flat decorative wallpaper (that
+  // mismatch was exactly why they read as pasted-on instead of sitting
+  // among the other books).
+  const bookPlankYs=[0.45,0.95,1.45];
+  [-0.5,0,0.5].forEach((bx,i)=>{
+    const by=bookPlankYs[i]+0.015+BOOK_H/2; // plank surface + half the plank's own thickness + half the book's height
     buildBookSpine(grp,bx,by,BOOKS[bookStart+i],bookStart+i);
   });
 
   grp.position.set(x,0,z); grp.rotation.y=ry; scene.add(grp);
 }
 
+const BOOK_W=0.155, BOOK_H=0.235, BOOK_D=0.085; // shared with buildBookshelf's plank-seating math above
 const BOOK_SPINE_COLORS=[0x8a1f2b,0x2f6f5e,0x3a5a80,0x6b3a55,0xa4682f,0xc9a24a];
 
 // A real leather-tome look, not a flat colored decal: a properly deep box
@@ -1485,7 +1495,7 @@ const BOOK_SPINE_COLORS=[0x8a1f2b,0x2f6f5e,0x3a5a80,0x6b3a55,0xa4682f,0xc9a24a];
 // so six books don't read as six copy-pasted boxes in a grid. Built as
 // its own little group so the box, bands, and label all tilt together.
 function buildBookSpine(parentGrp, localX, localY, book, index) {
-  const w=0.155, h=0.235, d=0.06;
+  const w=BOOK_W, h=BOOK_H, d=BOOK_D;
   const bookGrp=new THREE.Group();
   const spineColor=BOOK_SPINE_COLORS[index%BOOK_SPINE_COLORS.length];
 
