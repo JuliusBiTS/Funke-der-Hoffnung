@@ -168,6 +168,11 @@ body.locked #crosshair{opacity:1}
 #prox{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:3px;color:rgba(224,184,76,.55);z-index:200;pointer-events:none;text-transform:uppercase;opacity:0;transition:opacity .5s;white-space:nowrap}
 #prox.show{opacity:1}
 
+/* BALL PROMPT */
+#ball-prompt{position:fixed;bottom:104px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:2px;color:rgba(224,184,76,.85);z-index:200;pointer-events:none;text-transform:uppercase;opacity:0;transition:opacity .25s;white-space:nowrap;display:flex;align-items:center;gap:10px}
+#ball-prompt.show{opacity:1}
+.bp-key{display:inline-block;min-width:16px;padding:2px 6px;border:1px solid rgba(224,184,76,.5);background:rgba(2,4,12,.75);text-align:center;font-family:var(--fd);font-weight:700}
+
 /* FOCUS VIEW */
 #focus-overlay{position:fixed;left:24px;bottom:110px;width:340px;background:#000;border:1px solid rgba(224,184,76,.4);box-shadow:0 8px 30px rgba(0,0,0,.6);z-index:210;pointer-events:none}
 #focus-video{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#111}
@@ -363,6 +368,7 @@ canvas{display:block}
 </div>
 
 <div id="prox"></div>
+<div id="ball-prompt"></div>
 
 <div id="focus-overlay" style="display:none">
   <video id="focus-video" autoplay muted playsinline></video>
@@ -659,6 +665,26 @@ let speakingUids = new Set(); // uids (as strings) Agora currently reports as ta
 let whisperTarget = null;           // uid I'm currently whispering to, or null
 const activeWhispers = {};          // fromUid -> toUid, for whoever in the room is whispering right now
 
+// ══════════ SHARED BALL ══════════
+// One ball, shared by everyone — pick it up and throw it, or just shove it
+// without stopping to grab it, so it can actually get batted back and
+// forth. No physics engine: same hand-rolled gravity/velocity approach the
+// jump mechanic already uses. Ownership (who's currently simulating its
+// physics and broadcasting its position) passes to whoever last touched
+// it — the same "whoever's dragging it owns the broadcast" model already
+// proven by the battle-map tokens.
+// (y/ty start at 0, not BALL_RADIUS — that constant isn't declared until
+// below and buildBall() sets the real resting height anyway once the
+// scene actually exists)
+const ball = {
+  mesh: null,
+  x:0, y:0, z:0,
+  vx:0, vy:0, vz:0,
+  tx:0, ty:0, tz:0, // lerp target when someone ELSE currently owns it
+  holder: null,    // uid currently carrying it, or null
+  ownedByMe: false, // I'm currently simulating/broadcasting it (holding it, or it's still rolling from my last throw/push)
+};
+
 // Local-only, like the PiP opt-out — hides everyone else's vertical
 // movement (jumping, the DM's glide) for just this viewer if it gets
 // annoying with several players jumping around. Doesn't touch what
@@ -676,6 +702,14 @@ const GRAVITY = -18;
 const JUMP_FORCE = 6;
 const DM_JUMP_FORCE = 8;         // the DM jumps noticeably higher — a small visible flourish that's theirs alone
 const DM_GLIDE_GRAVITY_MULT = 0.18; // holding Space while airborne slows the DM's fall to a glide; everyone else free-falls normally
+
+const BALL_RADIUS = 0.18;
+const BALL_INTERACT_RANGE = 1.8; // how close you need to be to see the prompt and act on it
+const BALL_THROW_SPEED = 7;
+const BALL_PUSH_SPEED = 3.5;
+const BALL_BOUNCE_DAMP = 0.55;   // velocity kept after a floor/wall bounce
+const BALL_FRICTION = 0.985;     // per-frame horizontal damping while rolling on the floor
+const BALL_REST_EPS = 0.05;      // speed below which it's considered stopped
 
 // ══════════ AGORA STATE ══════════
 // Shared music is published from a SEPARATE Agora client with uid
@@ -777,6 +811,35 @@ document.addEventListener('keydown', e => {
   // Whisper hotkey — player-only, mirrors the button being hidden for the DM.
   if (e.code === 'KeyT' && isLocked && !isDM) {
     document.getElementById('btn-whisper').click();
+  }
+  // Ball — E is context-sensitive (pick up when free and in range, throw
+  // when already holding it); Q pushes it without needing to grab it
+  // first, so it can be batted back and forth without stopping to hold it.
+  // Proximity-based rather than crosshair-aimed, unlike token pickup —
+  // this one's meant to be a quick "walk up and swat it" action.
+  if (e.code === 'KeyE' && isLocked && ball.mesh) {
+    if (ball.holder === localUID) {
+      const dir=new THREE.Vector3(); camera.getWorldDirection(dir);
+      ball.vx = dir.x*BALL_THROW_SPEED;
+      ball.vy = dir.y*BALL_THROW_SPEED + 1.5; // a level throw still arcs instead of diving into the floor
+      ball.vz = dir.z*BALL_THROW_SPEED;
+      ball.holder = null;
+      ball.ownedByMe = true;
+      broadcastBall(true);
+    } else if (!ball.holder && camera.position.distanceTo(ball.mesh.position) < BALL_INTERACT_RANGE) {
+      ball.holder = localUID;
+      ball.ownedByMe = true;
+      broadcastBall(true);
+    }
+  }
+  if (e.code === 'KeyQ' && isLocked && ball.mesh && !ball.holder
+      && camera.position.distanceTo(ball.mesh.position) < BALL_INTERACT_RANGE) {
+    const dx=ball.x-playerPos.x, dz=ball.z-playerPos.z, d=Math.hypot(dx,dz)||1;
+    ball.vx += (dx/d)*BALL_PUSH_SPEED;
+    ball.vz += (dz/d)*BALL_PUSH_SPEED;
+    ball.vy += 0.8; // a small hop so it visibly leaves the floor instead of just sliding
+    ball.ownedByMe = true;
+    broadcastBall(true);
   }
   if (e.code === 'Escape') closeGallery(); // harmless no-op if it's not open
 });
@@ -1164,6 +1227,22 @@ function buildFurniture() {
   floatingLantern(1.6, 2.3, 1.9);
   floatingLantern(-1.2, 2.4, -1.9);
   buildSecretWing();
+  buildBall();
+}
+
+const BALL_COLOR = 0xe8578f; // pink — deliberately a clear pop of color against the room's gold/teal palette, reads as "this one's a toy"
+
+function buildBall() {
+  const geo = new THREE.SphereGeometry(BALL_RADIUS, 20, 16);
+  ball.mesh = new THREE.Mesh(geo, mat(BALL_COLOR, BALL_COLOR, 0.5, 0.4, 0.25));
+  // Tucked off to one side near the hearth, out of the direct path
+  // between the door and the table, so it doesn't get kicked around by
+  // accident on the way to a seat.
+  ball.x = -1.6; ball.y = BALL_RADIUS; ball.z = 1.4;
+  ball.tx = ball.x; ball.ty = ball.y; ball.tz = ball.z;
+  ball.mesh.position.set(ball.x, ball.y, ball.z);
+  ball.mesh.castShadow = true;
+  scene.add(ball.mesh);
 }
 
 function buildTable() {
@@ -1373,6 +1452,15 @@ async function broadcastToken(msg, reliable) {
   try {
     await agoraClient.sendStreamMessage(new TextEncoder().encode(JSON.stringify(msg)), reliable);
   } catch(e) { console.warn('token broadcast failed:', e); }
+}
+
+async function broadcastBall(reliable) {
+  if (!agoraClient) return;
+  try {
+    await agoraClient.sendStreamMessage(new TextEncoder().encode(JSON.stringify(
+      {type:'ball', x:ball.x, y:ball.y, z:ball.z, vx:ball.vx, vy:ball.vy, vz:ball.vz, holder:ball.holder}
+    )), reliable);
+  } catch(e) { console.warn('sendStreamMessage(ball) failed:', e); }
 }
 
 async function broadcastWhisper(active, toUid) {
@@ -1943,6 +2031,90 @@ function updateListener() {
   }
 }
 
+// Runs every frame: physics while I own it, carried position while I'm
+// holding it, or a smooth glide toward the last broadcast otherwise.
+function updateBall(dt) {
+  if (!ball.mesh) return;
+
+  if (ball.holder === localUID) {
+    // Carried a step in front of the camera and slightly low, so it
+    // doesn't sit exactly in the crosshair the whole time it's held.
+    const fw=new THREE.Vector3(); camera.getWorldDirection(fw);
+    ball.x = playerPos.x + fw.x*0.6;
+    ball.y = playerPos.y - 0.3;
+    ball.z = playerPos.z + fw.z*0.6;
+    ball.mesh.position.set(ball.x, ball.y, ball.z);
+  } else if (ball.ownedByMe) {
+    ball.vy += GRAVITY*dt;
+    ball.x += ball.vx*dt;
+    ball.y += ball.vy*dt;
+    ball.z += ball.vz*dt;
+
+    if (ball.y <= BALL_RADIUS) {
+      ball.y = BALL_RADIUS;
+      // A flat velocity cutoff isn't enough here: a damped bounce always
+      // re-adds exactly DAMP× the impact speed, and gravity re-adds
+      // |GRAVITY|*dt every single frame regardless of how small that is —
+      // so however tiny, the two settle into a stable fixed point that
+      // never actually reaches zero (impact speed converges to roughly
+      // 0.65×|GRAVITY|*dt, not decaying further). Scaling the cutoff with
+      // this frame's actual gravity kick, instead of a flat constant,
+      // guarantees that fixed point always falls below it no matter the
+      // framerate — worked out from the fixed-point math, not tuned by eye.
+      const microBounceCutoff = Math.abs(GRAVITY)*dt*0.7;
+      if (ball.vy < -microBounceCutoff) ball.vy = -ball.vy*BALL_BOUNCE_DAMP;
+      else ball.vy = 0;
+      ball.vx *= BALL_FRICTION;
+      ball.vz *= BALL_FRICTION;
+    }
+
+    // Walls — the same chamfered-octagon footprint the player is clamped
+    // to, but reflecting velocity instead of just projecting position
+    // back inside it. The chamfer is a single 45° cut on each corner, so
+    // damping+reversing both horizontal components is a fair cheap
+    // approximation of a real diagonal bounce there.
+    const margin = BALL_RADIUS + 0.05;
+    if (ball.x > OCT_HW-margin) { ball.x = OCT_HW-margin; ball.vx = -Math.abs(ball.vx)*BALL_BOUNCE_DAMP; }
+    if (ball.x < -(OCT_HW-margin)) { ball.x = -(OCT_HW-margin); ball.vx = Math.abs(ball.vx)*BALL_BOUNCE_DAMP; }
+    if (ball.z > OCT_HW-margin) { ball.z = OCT_HW-margin; ball.vz = -Math.abs(ball.vz)*BALL_BOUNCE_DAMP; }
+    if (ball.z < -(OCT_HW-margin)) { ball.z = -(OCT_HW-margin); ball.vz = Math.abs(ball.vz)*BALL_BOUNCE_DAMP; }
+    const limit = 2*OCT_HW-OCT_CH-margin;
+    const s = Math.abs(ball.x)+Math.abs(ball.z);
+    if (s > limit) {
+      const k=limit/s; ball.x*=k; ball.z*=k;
+      ball.vx = -ball.vx*BALL_BOUNCE_DAMP; ball.vz = -ball.vz*BALL_BOUNCE_DAMP;
+    }
+
+    ball.mesh.position.set(ball.x, ball.y, ball.z);
+
+    const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
+    if (speed < BALL_REST_EPS && ball.y <= BALL_RADIUS+0.001) {
+      ball.vx=0; ball.vy=0; ball.vz=0;
+      broadcastBall(true); // one last reliable snapshot of where it settled
+      ball.ownedByMe = false; // free for anyone to grab or push next
+    }
+  } else {
+    // Someone else owns it right now — glide toward their broadcast
+    // position/velocity rather than snapping, same lerp style remote
+    // avatars already use.
+    ball.x += (ball.tx-ball.x)*0.25;
+    ball.y += (ball.ty-ball.y)*0.25;
+    ball.z += (ball.tz-ball.z)*0.25;
+    ball.mesh.position.set(ball.x, ball.y, ball.z);
+  }
+
+  const promptEl = document.getElementById('ball-prompt');
+  if (ball.holder === localUID) {
+    promptEl.innerHTML = '<span class="bp-key">E</span> Werfen';
+    promptEl.classList.add('show');
+  } else if (!ball.holder && camera.position.distanceTo(ball.mesh.position) < BALL_INTERACT_RANGE) {
+    promptEl.innerHTML = '<span class="bp-key">E</span> Aufheben &nbsp; <span class="bp-key">Q</span> Stoßen';
+    promptEl.classList.add('show');
+  } else {
+    promptEl.classList.remove('show');
+  }
+}
+
 // ══════════ ANIMATION LOOP ══════════
 let _t=0;
 function animate() {
@@ -2068,6 +2240,8 @@ function animate() {
   const pe=document.getElementById('prox');
   if(nearDist<PROX_DIST&&nearName){pe.textContent='▶ '+nearName.toUpperCase()+' IN DER NÄHE';pe.classList.add('show');}
   else pe.classList.remove('show');
+
+  updateBall(dt);
 
   // dust motes
   if(particleMesh){
@@ -2195,6 +2369,10 @@ async function initAgora(appId, room, myName, asDM, token) {
         Object.entries(tokens).forEach(([id,t])=>{
           broadcastToken({type:'tokenAdd', id, url:t.url, u:t.u, v:t.v, category:t.category, size:t.size}, true);
         });
+        // Same gap for the ball — the DM is the one client guaranteed
+        // present to anchor a re-announce, even though ball ownership
+        // itself isn't DM-exclusive the rest of the time.
+        broadcastBall(true);
       }
       if (document.getElementById('vol-panel').style.display==='block') renderVolPanel();
       renderPip();
@@ -2286,6 +2464,10 @@ async function initAgora(appId, room, myName, asDM, token) {
     // whispering into the void.
     delete activeWhispers[ru.uid];
     if (String(whisperTarget)===String(ru.uid)) stopWhisper();
+    // Don't leave the ball permanently "held" by someone who just
+    // disconnected — free it up so the next person near it can grab or
+    // push it. It just sits wherever it last was, no auto-drop physics.
+    if (String(ball.holder)===String(ru.uid)) ball.holder=null;
   });
 
   agoraClient.on('stream-message',(uid,data)=>{
@@ -2325,6 +2507,17 @@ async function initAgora(appId, room, myName, asDM, token) {
       if(msg.type==='whisper'){
         if(msg.active) applyWhisperState(uid, msg.to);
         else clearWhisperState(uid);
+      }
+      if(msg.type==='ball'){
+        // Whoever sent this just asserted ownership (picked it up, threw
+        // it, pushed it, or re-announced it to a newcomer) — simplest
+        // last-write-wins handoff, good enough for a shared toy where a
+        // rare simultaneous-grab hiccup resolves itself within one
+        // broadcast tick.
+        ball.holder = msg.holder ?? null;
+        ball.tx = msg.x; ball.ty = msg.y; ball.tz = msg.z;
+        ball.vx = msg.vx; ball.vy = msg.vy; ball.vz = msg.vz;
+        ball.ownedByMe = false;
       }
       if(msg.type==='forceMute'){
         // Only players act on this — the DM never receives their own broadcast.
@@ -2382,8 +2575,14 @@ async function initAgora(appId, room, myName, asDM, token) {
   }catch(e){}
 
   sendName(myName,asDM);
-  // Broadcast position frequently — use 50ms for smooth movement
-  setInterval(broadcastPos, 50);
+  // Broadcast position frequently — use 50ms for smooth movement. The ball
+  // rides along on the same tick, but only while I'm actually holding it
+  // or simulating its physics — matching the token-drag model of "only
+  // the person currently in control broadcasts."
+  setInterval(()=>{
+    broadcastPos();
+    if (ball.holder===localUID || ball.ownedByMe) broadcastBall(false);
+  }, 50);
 }
 
 let posSendFailLogged = false;
