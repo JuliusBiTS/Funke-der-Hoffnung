@@ -387,9 +387,21 @@ canvas{display:block}
       ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
       ctx.fill();
     }
-    requestAnimationFrame(tick);
+    rafId=requestAnimationFrame(tick);
   }
-  requestAnimationFrame(tick);
+
+  // Runs the whole session otherwise — the connect screen is only ever
+  // shown again after a failed join, so the loop stops the instant it's
+  // hidden (real join or not) and only resumes if it reappears. A plain
+  // "run forever" loop here would burn CPU on a hidden canvas for the
+  // entire 6+ hour session for no visible benefit.
+  let rafId=null;
+  function startLoop(){ if(rafId===null) rafId=requestAnimationFrame(tick); }
+  function stopLoop(){ if(rafId!==null){ cancelAnimationFrame(rafId); rafId=null; } }
+  startLoop();
+  new MutationObserver(()=>{
+    if(stage.style.display==='none') stopLoop(); else startLoop();
+  }).observe(stage,{attributes:true,attributeFilter:['style']});
 
   function ignite(){
     if(lit) return;
@@ -1480,6 +1492,15 @@ function makeAvatar(asDM) {
 }
 
 function attachVideoToAvatar(user, videoEl) {
+  // Called again on every reconnect/republish over a long session (mic/cam
+  // toggles, a dropped wifi coming back) — the old texture+material aren't
+  // just replaced in JS, they hold onto real GPU memory that Three.js never
+  // frees on its own. Without disposing them here, a 6-hour session with a
+  // handful of reconnects across several players slowly leaks VRAM.
+  if (user.vidMesh.material) {
+    if (user.vidMesh.material.map) user.vidMesh.material.map.dispose();
+    user.vidMesh.material.dispose();
+  }
   const tex=new THREE.VideoTexture(videoEl);
   tex.minFilter=THREE.LinearFilter; tex.magFilter=THREE.LinearFilter;
   user.vidMesh.material=new THREE.MeshBasicMaterial({map:tex,side:THREE.DoubleSide});
@@ -2018,6 +2039,12 @@ async function initAgora(appId, room, myName, asDM, token) {
     if (mediaType==='video') {
       users[uid].videoTrack=ru.videoTrack;
       try {
+        // Same reconnect scenario as attachVideoToAvatar's dispose above —
+        // the old <video> element is about to be orphaned. It's never in
+        // the DOM, so it won't leak visibly, but a detached element with a
+        // live srcObject can keep decoding in the background until GC gets
+        // to it, which isn't guaranteed to be prompt. Stop it explicitly.
+        if (users[uid].videoEl) { users[uid].videoEl.pause(); users[uid].videoEl.srcObject=null; }
         const vel=document.createElement('video');
         vel.autoplay=true; vel.muted=true; vel.playsInline=true;
         vel.srcObject=new MediaStream([ru.videoTrack.getMediaStreamTrack()]);
