@@ -246,6 +246,7 @@ canvas{display:block}
   <button class="cb" id="btn-vol" title="Lautstärke einzelner Personen anpassen">🔊 <span>Lautstärke</span></button>
   <button class="cb" id="btn-gallery" title="Alle Kameras auf einen Blick (Hotkey: G)">🖼 <span>Galerie</span></button>
   <button class="cb" id="btn-whisper" title="Kurz privat mit einer Person sprechen, ohne die Gruppe abzulenken (Hotkey: T)">🤫 <span>Flüstern</span></button>
+  <button class="cb" id="btn-jumps" title="Springen anderer ein-/ausblenden, nur für dich">🦘 <span>Sprünge</span></button>
   <div class="cb-sep"></div>
   <button class="cb dm" id="btn-music" style="display:none">🎵 <span>Musik</span></button>
   <div class="cb-sep" id="sep-dm" style="display:none"></div>
@@ -514,6 +515,13 @@ let speakingUids = new Set(); // uids (as strings) Agora currently reports as ta
 let whisperTarget = null;           // uid I'm currently whispering to, or null
 const activeWhispers = {};          // fromUid -> toUid, for whoever in the room is whispering right now
 
+// Local-only, like the PiP opt-out — hides everyone else's vertical
+// movement (jumping, the DM's glide) for just this viewer if it gets
+// annoying with several players jumping around. Doesn't touch what
+// anyone else broadcasts or sees.
+const SHOW_JUMPS_KEY = 'fantasyRoomShowJumps';
+let showJumps = localStorage.getItem(SHOW_JUMPS_KEY) !== 'false'; // on by default
+
 // player
 const playerPos = new THREE.Vector3(0, EYE_H, 3.2);
 let   yaw = Math.PI, pitch = -0.05;
@@ -522,6 +530,8 @@ let   isLocked = false;
 let   velY = 0;
 const GRAVITY = -18;
 const JUMP_FORCE = 6;
+const DM_JUMP_FORCE = 8;         // the DM jumps noticeably higher — a small visible flourish that's theirs alone
+const DM_GLIDE_GRAVITY_MULT = 0.18; // holding Space while airborne slows the DM's fall to a glide; everyone else free-falls normally
 
 // ══════════ AGORA STATE ══════════
 // Shared music is published from a SEPARATE Agora client with uid
@@ -566,7 +576,7 @@ document.addEventListener('mousemove', e => {
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'Space' && isLocked && playerPos.y <= EYE_H + 0.05) {
-    velY = JUMP_FORCE;
+    velY = isDM ? DM_JUMP_FORCE : JUMP_FORCE;
     e.preventDefault();
   }
   // Token pickup/drop/remove. The DM can move any token; a player can only
@@ -1834,8 +1844,10 @@ function animate() {
       if(s>limit){ const k=limit/s; playerPos.x*=k; playerPos.z*=k; }
     }
 
-    // gravity + jump
-    velY += GRAVITY * dt;
+    // gravity + jump — holding Space mid-air lets the DM glide down slowly
+    // instead of dropping; everyone else just free-falls, no glide.
+    const gliding = isDM && keys['Space'] && playerPos.y > EYE_H;
+    velY += GRAVITY * (gliding ? DM_GLIDE_GRAVITY_MULT : 1) * dt;
     playerPos.y += velY * dt;
     if (playerPos.y <= EYE_H) {
       playerPos.y = EYE_H;
@@ -1888,6 +1900,12 @@ function animate() {
       u.grp.position.z+=(u.targetZ-u.grp.position.z)*.18;
     }
     if (u.targetYaw!==undefined) u.grp.rotation.y+=(u.targetYaw-u.grp.rotation.y)*.15;
+    // Eases toward 0 whenever the viewer has jumping hidden, regardless of
+    // what this person is actually doing — always settles back down rather
+    // than freezing mid-air if the toggle gets flipped while someone's
+    // airborne.
+    const targetY = showJumps ? (u.targetY ?? 0) : 0;
+    u.grp.position.y += (targetY-u.grp.position.y)*.18;
     setPannerPos(uid);
 
     // billboard
@@ -2019,9 +2037,10 @@ async function initAgora(appId, room, myName, asDM, token) {
       // Use buffered position if we got pos before user-published
       const px = pendingPos[uid]?.x ?? (Math.random()-.5)*1.5;
       const pz = pendingPos[uid]?.z ?? (Math.random()-.5)*1.5;
+      const py = pendingPos[uid]?.y ?? 0;
       const pyaw = pendingPos[uid]?.yaw ?? 0;
       grp.position.set(px,0,pz);
-      users[uid]={name:'User-'+uid,grp,vidMesh,whisperIcon,targetX:px,targetZ:pz,targetYaw:pyaw};
+      users[uid]={name:'User-'+uid,grp,vidMesh,whisperIcon,targetX:px,targetZ:pz,targetY:py,targetYaw:pyaw};
       delete pendingPos[uid];
       // A player who joins after the DM already set a map/tokens never
       // received those original broadcasts — Agora's data channel only
@@ -2133,10 +2152,11 @@ async function initAgora(appId, room, myName, asDM, token) {
           // User exists — update directly
           users[uid].targetX=msg.x;
           users[uid].targetZ=msg.z;
+          users[uid].targetY=msg.y;
           users[uid].targetYaw=msg.yaw;
         } else {
           // User not yet created — buffer it
-          pendingPos[uid]={x:msg.x,z:msg.z,yaw:msg.yaw};
+          pendingPos[uid]={x:msg.x,z:msg.z,y:msg.y,yaw:msg.yaw};
         }
       }
       if(msg.type==='map'){
@@ -2236,7 +2256,7 @@ async function broadcastPos(){
     // never awaited — no throw, no rejection, it just never reaches anyone.
     // unreliable: high-frequency (20/s), only the latest position matters.
     await agoraClient.sendStreamMessage(
-      new TextEncoder().encode(JSON.stringify({type:'pos',x:playerPos.x,z:playerPos.z,yaw})), false);
+      new TextEncoder().encode(JSON.stringify({type:'pos',x:playerPos.x,z:playerPos.z,y:playerPos.y,yaw})), false);
     if(users[localUID]?.grp){
       users[localUID].grp.position.x=playerPos.x;
       users[localUID].grp.position.z=playerPos.z;
@@ -2481,6 +2501,18 @@ document.getElementById('btn-whisper').addEventListener('click',()=>{
   const panel=document.getElementById('whisper-panel');
   if (panel.style.display==='block') { panel.style.display='none'; }
   else { renderWhisperList(); panel.style.display='block'; }
+});
+
+function renderJumpsBtn() {
+  const b=document.getElementById('btn-jumps');
+  b.classList.toggle('off',!showJumps);
+  b.querySelector('span').textContent=showJumps?'Sprünge':'Sprünge aus';
+}
+renderJumpsBtn();
+document.getElementById('btn-jumps').addEventListener('click',()=>{
+  showJumps=!showJumps;
+  try{ localStorage.setItem(SHOW_JUMPS_KEY,String(showJumps)); }catch(e){}
+  renderJumpsBtn();
 });
 
 document.getElementById('btn-gallery').addEventListener('click',()=>{
