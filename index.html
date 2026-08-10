@@ -982,6 +982,7 @@ const ball = {
   holder: null,    // uid currently carrying it, or null
   ownedByMe: false, // I'm currently simulating/broadcasting it (holding it, or it's still rolling from my last throw/push)
 };
+let ballDeleted = false; // DM-only pop; a page reload (rejoin) is the only way back — same as everything else in this room, nothing here has an undo
 
 // ══════════ BOOKS ══════════
 // Reading is a private act — purely local, nothing broadcast, unlike the
@@ -1107,9 +1108,17 @@ document.addEventListener('keydown', e => {
       }
     }
   }
-  if (e.code === 'KeyX' && isLocked && isDM && heldTokenId) {
-    removeToken(heldTokenId, true);
-    heldTokenId = null;
+  if (e.code === 'KeyX' && isLocked && isDM) {
+    if (heldTokenId) {
+      removeToken(heldTokenId, true);
+      heldTokenId = null;
+    } else if (ball.mesh && !ballDeleted && !ball.holder
+        && camera.position.distanceTo(ball.mesh.position) < BALL_INTERACT_RANGE) {
+      // DM-only, separate from E/Q so a DM who just wants it gone doesn't
+      // have to pick it up first — reuses X since that's already "the
+      // DM's remove key" for tokens.
+      deleteBall();
+    }
   }
   // DM mute-all hotkey — just clicks the real button so there's only ever
   // one place that owns the toggle logic.
@@ -1130,11 +1139,14 @@ document.addEventListener('keydown', e => {
   // first, so it can be batted back and forth without stopping to hold it.
   // Proximity-based rather than crosshair-aimed, unlike token pickup —
   // this one's meant to be a quick "walk up and swat it" action.
-  if (e.code === 'KeyE' && isLocked && ball.mesh) {
+  if (e.code === 'KeyE' && isLocked && ball.mesh && !ballDeleted) {
     if (ball.holder === localUID) {
+      // Pure look-direction throw — no added upward bias, so aiming
+      // straight up actually sends it straight up instead of the camera
+      // angle just nudging a mostly-fixed arc.
       const dir=new THREE.Vector3(); camera.getWorldDirection(dir);
       ball.vx = dir.x*BALL_THROW_SPEED;
-      ball.vy = dir.y*BALL_THROW_SPEED + 1.5; // a level throw still arcs instead of diving into the floor
+      ball.vy = dir.y*BALL_THROW_SPEED;
       ball.vz = dir.z*BALL_THROW_SPEED;
       ball.holder = null;
       ball.ownedByMe = true;
@@ -1145,7 +1157,7 @@ document.addEventListener('keydown', e => {
       broadcastBall(true);
     }
   }
-  if (e.code === 'KeyQ' && isLocked && ball.mesh && !ball.holder
+  if (e.code === 'KeyQ' && isLocked && ball.mesh && !ballDeleted && !ball.holder
       && camera.position.distanceTo(ball.mesh.position) < BALL_INTERACT_RANGE) {
     const dx=ball.x-playerPos.x, dz=ball.z-playerPos.z, d=Math.hypot(dx,dz)||1;
     ball.vx += (dx/d)*BALL_PUSH_SPEED;
@@ -1465,29 +1477,55 @@ function buildBookshelf(x,z,ry,width,bookStart) {
 
 const BOOK_SPINE_COLORS=[0x8a1f2b,0x2f6f5e,0x3a5a80,0x6b3a55,0xa4682f,0xc9a24a];
 
-// A raycastable box for the spine itself, plus a title label baked
-// vertically onto its face — same canvas-texture technique the wall
-// nameplates and whisper icon already use.
+// A real leather-tome look, not a flat colored decal: a properly deep box
+// (not a sliver), gilt bands near the top and bottom like binding cords —
+// ties it into the gold-trim language used everywhere else in the room
+// (frames, table rim, wall bases) — a gradient-shaded, gold-bordered
+// canvas label instead of flat fill + text, and a slight individual lean
+// so six books don't read as six copy-pasted boxes in a grid. Built as
+// its own little group so the box, bands, and label all tilt together.
 function buildBookSpine(parentGrp, localX, localY, book, index) {
-  const w=0.16, h=0.24, d=0.04, z=0.19;
-  const boxMesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
-    mat(BOOK_SPINE_COLORS[index%BOOK_SPINE_COLORS.length],0,0,0.6,0.05));
-  boxMesh.position.set(localX,localY,z);
+  const w=0.155, h=0.235, d=0.06;
+  const bookGrp=new THREE.Group();
+  const spineColor=BOOK_SPINE_COLORS[index%BOOK_SPINE_COLORS.length];
+
+  const boxMesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat(spineColor,0,0,0.5,0.1));
+  boxMesh.position.set(0,0,d/2);
   boxMesh.userData.bookIndex=index;
-  parentGrp.add(boxMesh);
+  bookGrp.add(boxMesh);
   bookMeshes.push(boxMesh);
 
-  const c=document.createElement('canvas'); c.width=48; c.height=140;
+  [h*0.34,-h*0.34].forEach(by=>{
+    const band=new THREE.Mesh(new THREE.BoxGeometry(w+0.006,0.02,d+0.006), mat(GOLD,GOLD,1.1,0.3,0.55));
+    band.position.set(0,by,d/2);
+    bookGrp.add(band);
+  });
+
+  const c=document.createElement('canvas'); c.width=64; c.height=180;
   const ctx=c.getContext('2d');
-  ctx.fillStyle='#e8d9ad'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.translate(24,70); ctx.rotate(Math.PI/2);
-  let fontSize=15; // shrink to fit longer spine titles, same trick the wall nameplates use
-  do { ctx.font=`bold ${fontSize}px Cinzel,serif`; fontSize--; } while (ctx.measureText(book.spine).width>128 && fontSize>7);
+  const base=new THREE.Color(spineColor), edge=base.clone().multiplyScalar(0.6);
+  const grad=ctx.createLinearGradient(0,0,0,180);
+  grad.addColorStop(0,'#'+edge.getHexString());
+  grad.addColorStop(0.5,'#'+base.getHexString());
+  grad.addColorStop(1,'#'+edge.getHexString());
+  ctx.fillStyle=grad; ctx.fillRect(0,0,64,180);
+  ctx.strokeStyle='rgba(224,184,76,0.75)'; ctx.lineWidth=3;
+  ctx.strokeRect(5,5,54,170);
+  ctx.fillStyle='#f2e8ca'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.translate(32,90); ctx.rotate(Math.PI/2);
+  let fontSize=18; // shrink to fit longer spine titles, same trick the wall nameplates use
+  do { ctx.font=`bold ${fontSize}px Cinzel,serif`; fontSize--; } while (ctx.measureText(book.spine).width>158 && fontSize>8);
   ctx.fillText(book.spine,0,0);
-  const label=new THREE.Mesh(new THREE.PlaneGeometry(w-0.005,h-0.005),
-    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c),transparent:true,side:THREE.DoubleSide}));
-  label.position.set(localX,localY,z+d/2+0.001);
-  parentGrp.add(label);
+  const label=new THREE.Mesh(new THREE.PlaneGeometry(w-0.006,h-0.006),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c)}));
+  label.position.set(0,0,d+0.001);
+  bookGrp.add(label);
+
+  bookGrp.position.set(localX,localY,0.16);
+  // Alternating, individually-sized lean — reads as "someone left these
+  // sitting at a slight angle," not a rendering glitch.
+  bookGrp.rotation.x=(index%2===0?1:-1)*(0.05+index*0.012);
+  parentGrp.add(bookGrp);
 }
 
 // West wall — the hearth, in the players' line of sight
@@ -1810,6 +1848,55 @@ async function broadcastBall(reliable) {
       {type:'ball', x:ball.x, y:ball.y, z:ball.z, vx:ball.vx, vy:ball.vy, vz:ball.vz, holder:ball.holder}
     )), reliable);
   } catch(e) { console.warn('sendStreamMessage(ball) failed:', e); }
+}
+
+async function broadcastBallDelete() {
+  if (!agoraClient) return;
+  try {
+    await agoraClient.sendStreamMessage(new TextEncoder().encode(JSON.stringify({type:'ballDelete'})), true);
+  } catch(e) { console.warn('sendStreamMessage(ballDelete) failed:', e); }
+}
+
+// A short, quiet balloon-pop synthesized on the fly — no audio asset
+// needed, reuses the same AudioContext the spatial-audio graph already
+// runs on. Kept deliberately quiet (0.18 peak gain) per request.
+function playPopSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+  osc.type='triangle';
+  osc.frequency.setValueAtTime(700,t);
+  osc.frequency.exponentialRampToValueAtTime(90,t+0.09);
+  gain.gain.setValueAtTime(0.18,t);
+  gain.gain.exponentialRampToValueAtTime(0.0001,t+0.15);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+0.16);
+}
+
+// Local visual+audio effect, triggered on the deleting DM's own client
+// immediately and on everyone else's once the broadcast arrives — a
+// short scale-up-then-shrink tween on the ball mesh, no dependency on
+// the main animate() loop since it's a one-off, self-terminating
+// rAF chain rather than something that needs to run every frame forever.
+function popBall() {
+  if (!ball.mesh) return;
+  playPopSound();
+  const t0=performance.now(), DURATION=260;
+  function step(now){
+    const t=Math.min(1,(now-t0)/DURATION);
+    const s = t<0.35 ? 1+(t/0.35)*0.4 : Math.max(0,1.4*(1-(t-0.35)/0.65));
+    ball.mesh.scale.setScalar(s);
+    if (t<1) requestAnimationFrame(step);
+    else { ball.mesh.visible=false; ball.mesh.scale.setScalar(1); }
+  }
+  requestAnimationFrame(step);
+}
+
+function deleteBall() {
+  if (ballDeleted) return;
+  ballDeleted=true;
+  popBall();
+  broadcastBallDelete();
 }
 
 async function broadcastWhisper(active, toUid) {
@@ -2460,6 +2547,14 @@ function updateBall(dt) {
     const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
     if (speed < BALL_REST_EPS && ball.y <= BALL_RADIUS+0.001) {
       ball.vx=0; ball.vy=0; ball.vz=0;
+      // The very next frame falls into the "someone else owns it" branch
+      // below, which lerps toward tx/ty/tz — those are only ever updated
+      // from an INCOMING broadcast, and the thrower never receives their
+      // own. Left unsynced here, the ball would snap back toward whatever
+      // stale target it last had (its original spawn point, for a first
+      // throw) a few frames after settling. Sync them to the real resting
+      // spot so there's nothing stale left to lerp toward.
+      ball.tx=ball.x; ball.ty=ball.y; ball.tz=ball.z;
       broadcastBall(true); // one last reliable snapshot of where it settled
       ball.ownedByMe = false; // free for anyone to grab or push next
     }
@@ -2474,11 +2569,14 @@ function updateBall(dt) {
   }
 
   const promptEl = document.getElementById('ball-prompt');
-  if (ball.holder === localUID) {
+  if (ballDeleted) {
+    promptEl.classList.remove('show');
+  } else if (ball.holder === localUID) {
     promptEl.innerHTML = '<span class="bp-key">E</span> Werfen';
     promptEl.classList.add('show');
   } else if (!ball.holder && camera.position.distanceTo(ball.mesh.position) < BALL_INTERACT_RANGE) {
-    promptEl.innerHTML = '<span class="bp-key">E</span> Aufheben &nbsp; <span class="bp-key">Q</span> Stoßen';
+    promptEl.innerHTML = '<span class="bp-key">E</span> Aufheben &nbsp; <span class="bp-key">Q</span> Stoßen'
+      + (isDM ? ' &nbsp; <span class="bp-key">X</span> Löschen' : '');
     promptEl.classList.add('show');
   } else {
     promptEl.classList.remove('show');
@@ -2759,8 +2857,10 @@ async function initAgora(appId, room, myName, asDM, token) {
         });
         // Same gap for the ball — the DM is the one client guaranteed
         // present to anchor a re-announce, even though ball ownership
-        // itself isn't DM-exclusive the rest of the time.
-        broadcastBall(true);
+        // itself isn't DM-exclusive the rest of the time. Send whichever
+        // state is actually current, so a newcomer never sees a ball that
+        // was already popped before they joined.
+        if (ballDeleted) broadcastBallDelete(); else broadcastBall(true);
       }
       if (document.getElementById('vol-panel').style.display==='block') renderVolPanel();
       renderPip();
@@ -2896,7 +2996,7 @@ async function initAgora(appId, room, myName, asDM, token) {
         if(msg.active) applyWhisperState(uid, msg.to);
         else clearWhisperState(uid);
       }
-      if(msg.type==='ball'){
+      if(msg.type==='ball' && !ballDeleted){
         // Whoever sent this just asserted ownership (picked it up, threw
         // it, pushed it, or re-announced it to a newcomer) — simplest
         // last-write-wins handoff, good enough for a shared toy where a
@@ -2906,6 +3006,10 @@ async function initAgora(appId, room, myName, asDM, token) {
         ball.tx = msg.x; ball.ty = msg.y; ball.tz = msg.z;
         ball.vx = msg.vx; ball.vy = msg.vy; ball.vz = msg.vz;
         ball.ownedByMe = false;
+      }
+      if(msg.type==='ballDelete' && !ballDeleted){
+        ballDeleted=true;
+        popBall();
       }
       if(msg.type==='forceMute'){
         // Only players act on this — the DM never receives their own broadcast.
