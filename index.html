@@ -6,12 +6,6 @@
 <title>Funke der Hoffnung // Sitzungsraum</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.2.js"></script>
 <style>
 :root{
@@ -913,7 +907,7 @@ const STONE_TRIM=0xc9b98a; // gold-grey molding
 const STONE_BLUE=0x3d5670; // fireplace stone
 
 // ══════════ THREE STATE ══════════
-let renderer, scene, camera, clock, composer, bloomPass;
+let renderer, scene, camera, clock;
 let particleMesh, emberMesh, starSphere;
 let cLight, mLight, hearthLight;
 // Every fire/magic point light registers itself here with its steady-state
@@ -1230,15 +1224,6 @@ function initScene() {
 
   cLight = new THREE.PointLight(GOLD, 1.3, 9); cLight.position.set(0,2.7,0.3); cLight.castShadow=true; scene.add(cLight);
   mLight = new THREE.PointLight(TEAL, 0.55, 9); mLight.position.set(0,WALL_H+1.2,0); scene.add(mLight);
-
-  // Post-processing: unreal bloom so fire, candles and gold trim actually
-  // radiate instead of just being bright flat pixels. Threshold kept high
-  // (only the brightest emissives bloom) so it reads as glow, not haze.
-  composer = new THREE.EffectComposer(renderer);
-  composer.addPass(new THREE.RenderPass(scene, camera));
-  bloomPass = new THREE.UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.25, 0.92);
-  composer.addPass(bloomPass);
 
   doorWallInfo = octWallDefs()[1]; // NE chamfer — the secret-room doorway
   buildRoom();
@@ -2888,7 +2873,7 @@ function animate() {
   if(cLight) cLight.intensity=1.3+Math.sin(_t*.7)*.15;
   if(mLight) mLight.intensity=0.55+Math.sin(_t*.5+1)*.1;
 
-  composer.render();
+  renderer.render(scene,camera);
 }
 
 function onResize(){
@@ -2896,8 +2881,6 @@ function onResize(){
   camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth,window.innerHeight);
-  if(composer) composer.setSize(window.innerWidth,window.innerHeight);
-  if(bloomPass) bloomPass.setSize(window.innerWidth,window.innerHeight);
 }
 
 // ══════════ AGORA ══════════
