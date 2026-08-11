@@ -1141,18 +1141,26 @@ document.addEventListener('keydown', e => {
   // this one's meant to be a quick "walk up and swat it" action.
   if (e.code === 'KeyE' && isLocked && ball.mesh && !ballDeleted) {
     if (ball.holder === localUID) {
-      // Look-direction throw, with the vertical component boosted rather
-      // than left 1:1 with the horizontal — a pure direction*speed throw
-      // is technically correct (upward pitch does add positive vy) but at
-      // these speeds/gravity the resulting arc is too subtle to actually
-      // read as "up" before it's already arced back down and rolling
-      // forward. Only kicks in once you're aiming upward at all (dir.y>0),
-      // so a level or downward throw is completely unaffected.
-      const dir=new THREE.Vector3(); camera.getWorldDirection(dir);
-      const vertBoost = 1 + Math.max(0,dir.y)*1.6;
-      ball.vx = dir.x*BALL_THROW_SPEED;
-      ball.vy = dir.y*BALL_THROW_SPEED*vertBoost;
-      ball.vz = dir.z*BALL_THROW_SPEED;
+      // Look-direction throw, computed directly from pitch/yaw via
+      // trigonometry rather than camera.getWorldDirection(). Confirmed by
+      // direct diagnostic that the camera's own transform can be stale
+      // relative to the live pitch value at the instant this reads it
+      // (observed pitch=0.468 but getWorldDirection's y implied an
+      // effective pitch of ~0.045 — camera.matrixWorld hadn't caught up).
+      // pitch/yaw themselves are updated straight from mouse input with no
+      // such lag, so computing from them directly sidesteps the whole
+      // class of staleness this could come from, whatever the exact cause.
+      // Vertical is also boosted — direction*speed alone is technically
+      // correct (upward pitch does add positive vy) but at these speeds/
+      // gravity the resulting arc was too subtle to read as "up" before
+      // arcing back down. Only kicks in once actually aiming upward, so a
+      // level or downward throw is unaffected.
+      const cosPitch=Math.cos(pitch);
+      const dirX=-Math.sin(yaw)*cosPitch, dirY=Math.sin(pitch), dirZ=-Math.cos(yaw)*cosPitch;
+      const vertBoost = 1 + Math.max(0,dirY)*1.6;
+      ball.vx = dirX*BALL_THROW_SPEED;
+      ball.vy = dirY*BALL_THROW_SPEED*vertBoost;
+      ball.vz = dirZ*BALL_THROW_SPEED;
       ball.holder = null;
       ball.ownedByMe = true;
       broadcastBall(true);
@@ -1453,6 +1461,16 @@ function buildBookshelf(x,z,ry,width,bookStart) {
     const sh=new THREE.Mesh(new THREE.BoxGeometry(width-0.04,0.03,0.28),mat(WOOD,0,0,0.55,0.02));
     sh.position.set(0,y,0.01); grp.add(sh);
   });
+  // Where each real book actually sits — its bottom edge resting on a
+  // shelf plank, like a real book standing up, rather than floating at
+  // the same height as the flat decorative wallpaper. Computed once and
+  // shared below with the texture, so the painted "wallpaper" spines and
+  // the real 3D book agree on where the book actually is.
+  const bookXs=[-0.5,0,0.5];
+  const bookPlankYs=[0.45,0.95,1.45];
+  const bookYs=bookPlankYs.map(py=>py+0.015+BOOK_H/2); // plank surface + half the plank's own thickness + half the book's height
+
+  const faceW=width-0.06, faceH=2.1;
   const c=document.createElement('canvas'); c.width=256; c.height=340;
   const ctx=c.getContext('2d');
   ctx.fillStyle='#2a1a10'; ctx.fillRect(0,0,256,340);
@@ -1466,19 +1484,27 @@ function buildBookshelf(x,z,ry,width,bookStart) {
       cx+=bw+2;
     }
   }
-  const face=new THREE.Mesh(new THREE.PlaneGeometry(width-0.06,2.1),
+  // Punch a clean gap in the painted spines exactly where each real book
+  // will stand — without this, the real book has to visually compete
+  // with painted artwork immediately behind/around it, which is exactly
+  // what was making it read as "pasted on top of" the shelf instead of
+  // genuinely part of it. World->canvas: face spans world X
+  // [-faceW/2,faceW/2] -> canvas X [0,256], and world Y [0.1,2.2]
+  // (bottom to top) -> canvas Y [340,0] (canvas rows run top-down).
+  ctx.fillStyle='#241708'; // plain recessed-shelf wood, no competing spine art
+  bookXs.forEach((bx,i)=>{
+    const cx=(bx+faceW/2)/faceW*256, cy=(2.2-bookYs[i])/2.1*340;
+    const cw=(BOOK_W/faceW)*256+12, ch=(BOOK_H/2.1)*340+12;
+    ctx.fillRect(cx-cw/2, cy-ch/2, cw, ch);
+  });
+  const face=new THREE.Mesh(new THREE.PlaneGeometry(faceW,faceH),
     new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c)}));
   face.position.set(0,1.15,0.16); grp.add(face);
 
-  // Three real, readable books per shelf — standing with their bottom
-  // edge actually resting on a shelf plank, like real books, rather than
-  // floating at the same height as the flat decorative wallpaper (that
-  // mismatch was exactly why they read as pasted-on instead of sitting
-  // among the other books).
-  const bookPlankYs=[0.45,0.95,1.45];
-  [-0.5,0,0.5].forEach((bx,i)=>{
-    const by=bookPlankYs[i]+0.015+BOOK_H/2; // plank surface + half the plank's own thickness + half the book's height
-    buildBookSpine(grp,bx,by,BOOKS[bookStart+i],bookStart+i);
+  // Three real, readable books per shelf, standing in the gaps just cut
+  // above.
+  bookXs.forEach((bx,i)=>{
+    buildBookSpine(grp,bx,bookYs[i],BOOKS[bookStart+i],bookStart+i);
   });
 
   grp.position.set(x,0,z); grp.rotation.y=ry; scene.add(grp);
