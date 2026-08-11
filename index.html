@@ -6,6 +6,12 @@
 <title>Funke der Hoffnung // Sitzungsraum</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.2.js"></script>
 <style>
 :root{
@@ -85,6 +91,12 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
 .jbtn{width:100%;background:transparent;border:1px solid var(--c);color:var(--c);font-family:var(--fd);font-size:12px;font-weight:700;letter-spacing:5px;padding:15px;cursor:pointer;text-transform:uppercase;transition:all .2s}
 .jbtn:hover{background:rgba(224,184,76,.08);box-shadow:0 0 20px rgba(224,184,76,.18)}
 .jbtn:disabled{opacity:.5;cursor:not-allowed}
+
+/* VIGNETTE — a soft, always-on cinematic frame around the 3D view, on top
+   of the ACES-graded render underneath rather than fighting it in shader
+   code. Kept subtle: darkens the corners, never the readable center. */
+#vignette{position:fixed;inset:0;z-index:40;pointer-events:none;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 100%)}
 
 /* CROSSHAIR */
 #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:500;opacity:0;transition:opacity .3s}
@@ -276,6 +288,7 @@ canvas{display:block}
 </div>
 
 <canvas id="c"></canvas>
+<div id="vignette"></div>
 <div id="crosshair"></div>
 
 <div id="lock-prompt" class="vis">
@@ -900,11 +913,21 @@ const STONE_TRIM=0xc9b98a; // gold-grey molding
 const STONE_BLUE=0x3d5670; // fireplace stone
 
 // ══════════ THREE STATE ══════════
-let renderer, scene, camera, clock;
+let renderer, scene, camera, clock, composer, bloomPass;
 let particleMesh, emberMesh, starSphere;
 let cLight, mLight, hearthLight;
+// Every fire/magic point light registers itself here with its steady-state
+// intensity, then one loop in animate() flickers all of them together —
+// each with its own random phase so they don't pulse in lockstep.
+const flickerLights=[];
+function addFlicker(light, base){ flickerLights.push({light, base, p1:Math.random()*10, p2:Math.random()*10}); }
 let doorWallInfo; // NE-chamfer doorway to the secret room — used for the movement passage
 let tacticalView = false; // fixed bird's-eye camera over the table, for precise token placement
+// Slow scripted camera drift shown before the player clicks to take control
+// (pointer lock) — an establishing shot of the room instead of a static
+// first-person stare at the spawn point while they read the lock prompt.
+let introActive = false;
+const INTRO_CENTER = new THREE.Vector3(0, 1.1, 0); // roughly the table's center
 
 // ══════════ SHOOTING STARS ══════════
 // DM-client-authoritative timer (broadcasts a bare trigger event, no
@@ -1045,6 +1068,7 @@ document.querySelector('#lock-prompt .lp').addEventListener('click', () => canva
 
 document.addEventListener('pointerlockchange', () => {
   isLocked = document.pointerLockElement === canvas;
+  if (isLocked) introActive = false; // cut from the establishing shot to first-person the instant control is taken
   document.body.classList.toggle('locked', isLocked);
   document.getElementById('lock-prompt').classList.toggle('vis', !isLocked);
 });
@@ -1207,12 +1231,39 @@ function initScene() {
   cLight = new THREE.PointLight(GOLD, 1.3, 9); cLight.position.set(0,2.7,0.3); cLight.castShadow=true; scene.add(cLight);
   mLight = new THREE.PointLight(TEAL, 0.55, 9); mLight.position.set(0,WALL_H+1.2,0); scene.add(mLight);
 
+  // Post-processing: unreal bloom so fire, candles and gold trim actually
+  // radiate instead of just being bright flat pixels. Threshold kept high
+  // (only the brightest emissives bloom) so it reads as glow, not haze.
+  composer = new THREE.EffectComposer(renderer);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.4, 0.78);
+  composer.addPass(bloomPass);
+
   doorWallInfo = octWallDefs()[1]; // NE chamfer — the secret-room doorway
   buildRoom();
   buildFurniture();
   buildParticles();
   window.addEventListener('resize', onResize);
+  introActive = true;
   animate();
+}
+
+// Slow, continuous orbit around the table — no fixed start/end, so it never
+// has a visible seam no matter how long the player takes to click through
+// the lock prompt. Cut to first-person the instant pointer lock engages.
+function updateIntroCamera(t){
+  const angle  = t*0.07;
+  const radius = 2.9 + Math.sin(t*0.13)*0.5;
+  const height = 1.9 + Math.sin(t*0.09+1.3)*0.4;
+  camera.position.set(
+    INTRO_CENTER.x + Math.cos(angle)*radius,
+    height,
+    INTRO_CENTER.z + Math.sin(angle)*radius);
+  camera.lookAt(
+    INTRO_CENTER.x + Math.sin(t*0.05)*0.6,
+    1.15 + Math.sin(t*0.08)*0.15,
+    INTRO_CENTER.z + Math.cos(t*0.06)*0.4);
 }
 
 // ══════════ GEOMETRY HELPERS ══════════
@@ -1613,6 +1664,7 @@ function buildFireplace(x,z,ry) {
   const off = new THREE.Vector3(0,0.55,0.6).applyEuler(new THREE.Euler(0,ry,0));
   hearthLight.position.set(x+off.x, 0.55, z+off.z);
   scene.add(hearthLight);
+  addFlicker(hearthLight, 1.0);
 }
 
 // South wall, behind the players — two more player portraits
@@ -2038,6 +2090,7 @@ function buildSecretWing() {
 
   const torch=new THREE.PointLight(0x9a6fd8,0.9,5);
   torch.position.set(0,1.65,CORR_L*0.55); wing.add(torch);
+  addFlicker(torch, 0.9);
   const torchGlow=new THREE.Mesh(new THREE.SphereGeometry(0.05,8,8),mat(0x9a6fd8,0x9a6fd8,1.6));
   torchGlow.position.copy(torch.position); wing.add(torchGlow);
 
@@ -2100,6 +2153,7 @@ function buildSecretRoom(wing, corrL, corrW) {
   flame.position.set(0,TY+0.19,cz); wing.add(flame);
   const candleLight=new THREE.PointLight(AMBER,1.2,4.5);
   candleLight.position.copy(flame.position); wing.add(candleLight);
+  addFlicker(candleLight, 1.2);
   const fill=new THREE.PointLight(VIOLET_TRIM,0.5,6);
   fill.position.set(0,1.6,cz); wing.add(fill);
 
@@ -2128,6 +2182,7 @@ function floatingLantern(x,y,z) {
   lantern.position.set(x,y,z); scene.add(lantern);
   const l=new THREE.PointLight(GOLD,0.4,4);
   l.position.set(x,y,z); scene.add(l);
+  addFlicker(l, 0.4);
   return l;
 }
 
@@ -2705,6 +2760,8 @@ function animate() {
   if (tacticalView && battleMapMesh) {
     camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+1.6, battleMapMesh.position.z);
     camera.rotation.set(-Math.PI/2, 0, 0, 'YXZ');
+  } else if (introActive && !isLocked) {
+    updateIntroCamera(_t);
   } else {
     camera.position.copy(playerPos);
     camera.rotation.set(pitch,yaw,0,'YXZ');
@@ -2820,15 +2877,18 @@ function animate() {
     }
   }
 
-  // hearth flicker
-  if(hearthLight) hearthLight.intensity = 1.0 + Math.sin(_t*3.1)*0.12 + Math.sin(_t*7.7)*0.06;
+  // fire/magic light flicker — every torch, candle and hearth light registered
+  // via addFlicker(), each on its own random phase so they don't pulse in sync
+  for(const f of flickerLights){
+    f.light.intensity = f.base + Math.sin(_t*3.1+f.p1)*f.base*0.12 + Math.sin(_t*7.7+f.p2)*f.base*0.06;
+  }
   if(emberMesh) emberMesh.material.emissiveIntensity = 2.3 + Math.sin(_t*4.4)*0.3;
 
   // light pulse
   if(cLight) cLight.intensity=1.3+Math.sin(_t*.7)*.15;
   if(mLight) mLight.intensity=0.55+Math.sin(_t*.5+1)*.1;
 
-  renderer.render(scene,camera);
+  composer.render();
 }
 
 function onResize(){
@@ -2836,6 +2896,8 @@ function onResize(){
   camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth,window.innerHeight);
+  if(composer) composer.setSize(window.innerWidth,window.innerHeight);
+  if(bloomPass) bloomPass.setSize(window.innerWidth,window.innerHeight);
 }
 
 // ══════════ AGORA ══════════
