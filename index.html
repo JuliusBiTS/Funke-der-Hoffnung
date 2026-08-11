@@ -92,6 +92,10 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
 #vignette{position:fixed;inset:0;z-index:40;pointer-events:none;
   background:radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 100%)}
 
+/* Storm-preset lightning strobe — a plain white-blue flash, opacity driven
+   frame-by-frame from JS (updateLightning() in the main script). */
+#lightning-flash{position:fixed;inset:0;z-index:41;pointer-events:none;background:#dce8ff;opacity:0}
+
 /* CROSSHAIR */
 #crosshair{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:500;opacity:0;transition:opacity .3s}
 #crosshair::before,#crosshair::after{content:'';position:absolute;background:rgba(224,184,76,0.6)}
@@ -154,6 +158,10 @@ body.locked #crosshair{opacity:1}
 .pb:hover{background:rgba(58,160,196,.1);border-color:var(--m);color:var(--m)}
 .pb.active{border-color:var(--r);color:var(--r);box-shadow:0 0 10px rgba(209,73,91,.3)}
 .pb.active:hover{background:rgba(209,73,91,.1);border-color:var(--r);color:var(--r)}
+.amb-row{display:flex;flex-wrap:wrap;gap:5px}
+.amb-btn{flex:1 1 calc(50% - 5px);background:transparent;border:1px solid rgba(58,160,196,.28);color:rgba(58,160,196,.7);font-family:var(--fm);font-size:10px;letter-spacing:1px;padding:7px 4px;cursor:pointer;transition:all .15s;text-transform:uppercase}
+.amb-btn:hover{background:rgba(58,160,196,.1);border-color:var(--m);color:var(--m)}
+.amb-btn.active{border-color:var(--c);color:var(--c);box-shadow:0 0 10px rgba(224,184,76,.3)}
 .mstat{font-size:9px;letter-spacing:1px;color:rgba(58,160,196,.45);text-align:center;padding:6px 0 2px}
 .mstat.on{color:var(--g)}
 .recent-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px}
@@ -283,6 +291,7 @@ canvas{display:block}
 
 <canvas id="c"></canvas>
 <div id="vignette"></div>
+<div id="lightning-flash"></div>
 <div id="crosshair"></div>
 
 <div id="lock-prompt" class="vis">
@@ -344,6 +353,16 @@ canvas{display:block}
 
 <div id="gm" style="display:none">
   <div class="gm-head">🧭 DM-Pult</div>
+  <div class="gm-sec">
+    <div class="gstt">Stimmung (visuell, für alle sichtbar)</div>
+    <div class="amb-row">
+      <button class="amb-btn active" data-amb="calm">Ruhig</button>
+      <button class="amb-btn" data-amb="combat">Kampf</button>
+      <button class="amb-btn" data-amb="storm">Sturm</button>
+      <button class="amb-btn" data-amb="sea">Hohe See</button>
+      <button class="amb-btn" data-amb="forest">Wald</button>
+    </div>
+  </div>
   <div class="gm-sec">
     <div class="gstt">Spieler-Steuerung</div>
     <button class="pb" id="mute-all-btn" title="Hotkey: M">🔇 Alle stummschalten</button>
@@ -923,6 +942,134 @@ let tacticalView = false; // fixed bird's-eye camera over the table, for precise
 let introActive = false;
 const INTRO_CENTER = new THREE.Vector3(0, 1.1, 0); // roughly the table's center
 
+// ══════════ AMBIANCE ══════════
+// Visual-only mood presets, DM-triggered and broadcast so every client
+// shifts together. The room's geometry never changes — only the "world
+// outside" (fog, sky through the dome gaps, stars) and the general room
+// wash (fog/ambient/cLight/mLight) shift; the warm fire/candle/torch
+// lights (hearthLight, torches, candles, lanterns) stay put on purpose,
+// so the interior always reads as lit and lived-in against whatever mood
+// is happening around it. Every field here is a plain number/color so
+// setAmbiance() can lerp ALL of them uniformly during a crossfade instead
+// of hand-rolling a special case per property.
+const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const AMBIANCE = {
+  // skyStop0/skyStop1 map 1:1 onto the sky canvas gradient's addColorStop(0)
+  // and addColorStop(1) in buildDome() — calm's values are that gradient's
+  // original literal colors, so loading in stays pixel-identical to before.
+  calm: {
+    label:'Ruhig', fogColor:0x0b1220, fogNear:5, fogFar:15,
+    skyStop0:0x0c1c38, skyStop1:0x182c4e, starVisibility:1,
+    ambientColor:0x151109, ambientIntensity:0.6,
+    cColor:GOLD, cIntensity:1.3, mColor:TEAL, mIntensity:0.55,
+    particleColor:GOLD, particleDir:1, particleSpeedMult:1, particleOpacity:0.2,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp:0, shakeAmp:0, lightning:false,
+  },
+  combat: {
+    label:'Kampf', fogColor:0x190606, fogNear:4, fogFar:12,
+    skyStop0:0x140404, skyStop1:0x3a0d0d, starVisibility:1,
+    ambientColor:0x220808, ambientIntensity:0.55,
+    cColor:0xff5a3a, cIntensity:1.5, mColor:0xd12222, mIntensity:0.5,
+    particleColor:0xff6a3a, particleDir:1, particleSpeedMult:1.6, particleOpacity:0.26,
+    emberSpeedMult:1.9, emberOpacityBoost:0.18,
+    swayAmp:0, shakeAmp: REDUCED_MOTION?0:0.02, lightning:false,
+  },
+  storm: {
+    label:'Sturm', fogColor:0x1b2430, fogNear:3.2, fogFar:10,
+    skyStop0:0x11161d, skyStop1:0x2a3542, starVisibility:0,
+    ambientColor:0x141a20, ambientIntensity:0.5,
+    cColor:0x9fb6c9, cIntensity:1.0, mColor:0x6f88a0, mIntensity:0.6,
+    particleColor:0xaebfd0, particleDir:-1, particleSpeedMult:5, particleOpacity:0.32,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp:0, shakeAmp:0, lightning:true,
+  },
+  sea: {
+    label:'Hohe See', fogColor:0x0e2b33, fogNear:5, fogFar:16,
+    skyStop0:0x04141c, skyStop1:0x123244, starVisibility:1,
+    ambientColor:0x0c1c22, ambientIntensity:0.55,
+    cColor:0x6fd0c9, cIntensity:1.1, mColor:0x2a6f8a, mIntensity:0.6,
+    particleColor:0xbfe8e0, particleDir:1, particleSpeedMult:1.2, particleOpacity:0.22,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp: REDUCED_MOTION?0:0.014, shakeAmp:0, lightning:false,
+  },
+  forest: {
+    label:'Wald', fogColor:0x16240f, fogNear:4, fogFar:13,
+    skyStop0:0x0e1a0a, skyStop1:0x243d1c, starVisibility:0,
+    ambientColor:0x131f0e, ambientIntensity:0.55,
+    cColor:0x9fd070, cIntensity:1.0, mColor:0x4f8a4f, mIntensity:0.5,
+    particleColor:0xc9e07a, particleDir:1, particleSpeedMult:0.55, particleOpacity:0.24,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp:0, shakeAmp:0, lightning:false,
+  },
+};
+const AMBIANCE_FADE_DUR = 4.5; // seconds — slow enough to read as a mood shift, not a cut
+let currentAmbianceName = 'calm';
+let ambTransition = null; // {from:{...snapshot of live values}, to:AMBIANCE[name], t:0}
+let ambLive = {...AMBIANCE.calm}; // the actual current (possibly mid-lerp) values driving the scene
+let ambientLight; // stored so ambiance can retint the room wash, not just the fire/candle accents
+let lightningLight, lightningFlashEl, nextLightningAt = null, lightningFlash = 0;
+let skyMesh, skyCanvas, skyCtx;
+const starPointsLayers = []; // {points, baseOpacity} — so ambiance can fade the star field in/out
+const _ambColorA=new THREE.Color(), _ambColorB=new THREE.Color(); // scratch objects, reused every frame to avoid per-frame allocation
+
+const AMB_COLOR_FIELDS  = ['fogColor','skyStop0','skyStop1','ambientColor','cColor','mColor','particleColor'];
+const AMB_NUMBER_FIELDS = ['fogNear','fogFar','starVisibility','ambientIntensity','cIntensity','mIntensity',
+  'particleDir','particleSpeedMult','particleOpacity','emberSpeedMult','emberOpacityBoost','swayAmp','shakeAmp'];
+
+// DM-triggered (or broadcast-received) mood change. Starts a crossfade —
+// the actual per-frame lerp happens in applyAmbiance(), called every frame
+// from animate() — rather than snapping instantly, so a DM calling "Sturm"
+// mid-session reads as weather rolling in, not a jump-cut.
+function setAmbiance(name, opts={}) {
+  const target = AMBIANCE[name];
+  if (!target) return;
+  ambTransition = { from:{...ambLive}, to:target, t:0 };
+  currentAmbianceName = name;
+  updateAmbianceButtons();
+  if (opts.broadcast !== false) broadcastToken({type:'ambiance', name}, true);
+}
+
+function updateAmbianceButtons(){
+  if (!isDM) return;
+  document.querySelectorAll('.amb-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.amb===currentAmbianceName);
+  });
+}
+
+// Called every frame from animate(). Advances the crossfade (if one is
+// running) and, every frame regardless, pushes the live values onto the
+// actual THREE objects — cheap enough (a handful of number/color writes)
+// that there's no need to special-case "idle" vs "mid-transition" for
+// anything except the sky canvas repaint, which is the one genuinely
+// non-trivial part of this.
+function applyAmbiance(dt){
+  if (ambTransition) {
+    ambTransition.t += dt;
+    const k = Math.min(1, ambTransition.t/AMBIANCE_FADE_DUR);
+    const e = k<1 ? (1-Math.cos(k*Math.PI))/2 : 1; // ease in/out — gentle start and settle, not linear
+    const {from,to} = ambTransition;
+    AMB_COLOR_FIELDS.forEach(f=>{
+      _ambColorA.setHex(from[f]); _ambColorB.setHex(to[f]);
+      ambLive[f] = _ambColorA.lerp(_ambColorB,e).getHex();
+    });
+    AMB_NUMBER_FIELDS.forEach(f=>{ ambLive[f] = from[f] + (to[f]-from[f])*e; });
+    redrawSky();
+    if (k>=1) ambTransition = null;
+  }
+
+  if (scene.fog) {
+    scene.fog.color.setHex(ambLive.fogColor);
+    scene.fog.near = ambLive.fogNear; scene.fog.far = ambLive.fogFar;
+  }
+  if (scene.background) scene.background.setHex(ambLive.fogColor);
+  if (ambientLight) { ambientLight.color.setHex(ambLive.ambientColor); ambientLight.intensity = ambLive.ambientIntensity; }
+  if (cLight) cLight.color.setHex(ambLive.cColor); // intensity itself is driven by the pulse formula in animate(), off ambLive.cIntensity as its base
+  if (mLight) mLight.color.setHex(ambLive.mColor);
+  if (particleMesh) particleMesh.material.color.setHex(ambLive.particleColor);
+  starPointsLayers.forEach(l=>{ l.points.material.opacity = l.baseOpacity*ambLive.starVisibility; });
+}
+
 // ══════════ SHOOTING STARS ══════════
 // DM-client-authoritative timer (broadcasts a bare trigger event, no
 // payload) so everyone sees one at the same real moment — each client then
@@ -1220,10 +1367,18 @@ function initScene() {
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 40);
 
   // lights — warm, indirect, kept low so the small marble room never blows out
-  scene.add(new THREE.AmbientLight(0x151109, 0.6));
+  ambientLight = new THREE.AmbientLight(0x151109, 0.6); scene.add(ambientLight);
 
   cLight = new THREE.PointLight(GOLD, 1.3, 9); cLight.position.set(0,2.7,0.3); cLight.castShadow=true; scene.add(cLight);
   mLight = new THREE.PointLight(TEAL, 0.55, 9); mLight.position.set(0,WALL_H+1.2,0); scene.add(mLight);
+
+  // storm-preset lightning strobe — near the dome apex so its flash washes
+  // down through the gaps between ribs; intensity 0 at rest, spiked briefly
+  // by updateLightning() in animate() only while the storm preset is active.
+  lightningLight = new THREE.PointLight(0xcfe0ff, 0, 20);
+  lightningLight.position.set(0, WALL_H+DOME_R*0.7, 0);
+  scene.add(lightningLight);
+  lightningFlashEl = document.getElementById('lightning-flash');
 
   doorWallInfo = octWallDefs()[1]; // NE chamfer — the secret-room doorway
   buildRoom();
@@ -1249,6 +1404,39 @@ function updateIntroCamera(t){
     INTRO_CENTER.x + Math.sin(t*0.05)*0.6,
     1.15 + Math.sin(t*0.08)*0.15,
     INTRO_CENTER.z + Math.cos(t*0.06)*0.4);
+}
+
+// Short, decaying position-only jolts (never rotation — that's the nauseating
+// kind) every several seconds while combat's shakeAmp is active, instead of
+// continuous vibration a table full of players would otherwise sit inside
+// for a whole encounter.
+let shakePulse=0, nextShakeAt=null;
+function updateCombatShake(dt){
+  if (nextShakeAt===null) nextShakeAt=_t+3+Math.random()*6;
+  else if (_t>nextShakeAt) { shakePulse=1; nextShakeAt=_t+5+Math.random()*10; }
+  if (shakePulse>0.001) {
+    shakePulse*=Math.pow(0.001, dt/0.35); // ~0.35s decay to inaudible
+    const m=shakePulse*ambLive.shakeAmp;
+    camera.position.x += (Math.random()-0.5)*m;
+    camera.position.y += (Math.random()-0.5)*m;
+  } else shakePulse=0;
+}
+
+// Storm-preset lightning: an irregular strobe on lightningLight (near the
+// dome apex) plus a full-screen flash overlay. Client-local timing (like the
+// fire flicker phases) — it's ambient flavor, not a shared game event, so it
+// doesn't need DM-authoritative sync the way shooting stars do.
+function updateLightning(dt){
+  const stormy = ambTransition ? ambTransition.to.lightning : AMBIANCE[currentAmbianceName].lightning;
+  if (stormy) {
+    if (nextLightningAt===null) nextLightningAt=_t+3+Math.random()*6;
+    else if (_t>nextLightningAt) { lightningFlash=1; nextLightningAt=_t+4+Math.random()*9; }
+  } else {
+    nextLightningAt=null;
+  }
+  lightningFlash = lightningFlash>0.001 ? lightningFlash*Math.pow(0.0005, dt/0.5) : 0;
+  if (lightningLight) lightningLight.intensity = lightningFlash*3.5;
+  if (lightningFlashEl) lightningFlashEl.style.opacity = (lightningFlash*0.35).toFixed(3);
 }
 
 // ══════════ GEOMETRY HELPERS ══════════
@@ -1384,14 +1572,17 @@ function buildDome() {
   starSphere=new THREE.Group();
   starSphere.position.y=WALL_H;
 
-  const bgc=document.createElement('canvas'); bgc.width=4; bgc.height=512;
-  const bgctx=bgc.getContext('2d');
-  const grad=bgctx.createLinearGradient(0,0,0,512);
+  // skyCanvas/skyCtx/skyMesh kept as module state (not locals) so
+  // redrawSky() can repaint this same tiny gradient with different colors
+  // whenever the ambiance changes, instead of rebuilding the mesh.
+  skyCanvas=document.createElement('canvas'); skyCanvas.width=4; skyCanvas.height=512;
+  skyCtx=skyCanvas.getContext('2d');
+  const grad=skyCtx.createLinearGradient(0,0,0,512);
   grad.addColorStop(0,'#0c1c38'); grad.addColorStop(1,'#182c4e');
-  bgctx.fillStyle=grad; bgctx.fillRect(0,0,4,512);
-  const skyMesh=new THREE.Mesh(
+  skyCtx.fillStyle=grad; skyCtx.fillRect(0,0,4,512);
+  skyMesh=new THREE.Mesh(
     new THREE.SphereGeometry(DOME_R*0.985,32,16,0,Math.PI*2,0,Math.PI/2),
-    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(bgc), side:THREE.BackSide})
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(skyCanvas), side:THREE.BackSide})
   );
   starSphere.add(skyMesh);
 
@@ -1411,15 +1602,29 @@ function buildDome() {
     const g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.BufferAttribute(pos,3));
     g.setAttribute('color',new THREE.BufferAttribute(col,3));
-    return new THREE.Points(g,new THREE.PointsMaterial({
+    const pts=new THREE.Points(g,new THREE.PointsMaterial({
       size, sizeAttenuation:false, vertexColors:true,
       transparent:true, opacity, depthWrite:false, blending:THREE.AdditiveBlending
     }));
+    starPointsLayers.push({points:pts, baseOpacity:opacity}); // ambiance fades stars via this, not the mesh's own opacity field
+    return pts;
   }
   starSphere.add(starLayer(1800,1.4,0.85,0.55)); // bulk of faint, small stars
   starSphere.add(starLayer(140,2.6,0.95,1.0));   // a few brighter standouts
 
   scene.add(starSphere);
+}
+
+// Repaints the tiny 4x512 sky gradient with the live (possibly mid-crossfade)
+// ambiance colors. Cheap enough to call every frame during a transition —
+// applyAmbiance() only calls it while one is actually in progress.
+function redrawSky(){
+  if(!skyCtx) return;
+  const grad=skyCtx.createLinearGradient(0,0,0,512);
+  grad.addColorStop(0,'#'+_ambColorA.setHex(ambLive.skyStop0).getHexString());
+  grad.addColorStop(1,'#'+_ambColorA.setHex(ambLive.skyStop1).getHexString());
+  skyCtx.fillStyle=grad; skyCtx.fillRect(0,0,4,512);
+  skyMesh.material.map.needsUpdate=true;
 }
 
 // A brief meteor streak — same GPU point-sprite technique as the main star
@@ -2171,9 +2376,10 @@ function floatingLantern(x,y,z) {
   return l;
 }
 
-let rainMesh;
 function buildParticles() {
-  // floating gold dust motes, slow upward drift
+  // floating gold dust motes, slow upward drift — direction/speed/color are
+  // driven per-frame by the active ambiance (see applyAmbiance() and the
+  // dust-mote update block in animate())
   const N=110, pos=new Float32Array(N*3), spd=new Float32Array(N);
   for(let i=0;i<N;i++){
     pos[i*3]=(Math.random()-.5)*OCT_HW*1.7;
@@ -2749,7 +2955,18 @@ function animate() {
     updateIntroCamera(_t);
   } else {
     camera.position.copy(playerPos);
-    camera.rotation.set(pitch,yaw,0,'YXZ');
+    // Ambiance-driven camera motion — a slow sinusoidal roll/pitch swell
+    // for "sea" (kept tiny; prefers-reduced-motion zeroes it in the preset
+    // itself, not just here) and short decaying shake pulses for "combat",
+    // rather than continuous shake, since this room is meant to be sat in
+    // for hours, not just a few dramatic seconds.
+    let camRoll=0, camPitch=pitch;
+    if (ambLive.swayAmp>0.0001) {
+      camPitch += Math.sin(_t*0.35)*ambLive.swayAmp;
+      camRoll  += Math.sin(_t*0.27+1.4)*ambLive.swayAmp*1.4;
+    }
+    camera.rotation.set(camPitch,yaw,camRoll,'YXZ');
+    if (ambLive.shakeAmp>0.0001) updateCombatShake(dt);
   }
 
   // listener
@@ -2830,22 +3047,37 @@ function animate() {
     }
   }
 
-  // dust motes
+  // ambiance — crossfades fog/lights/sky/particle color+opacity toward
+  // whatever preset is active; must run before the particle/light blocks
+  // below so they read this frame's live values, not last frame's.
+  applyAmbiance(dt);
+  updateLightning(dt);
+
+  // weather/dust particles — direction and speed come from the active
+  // ambiance (dust drifts up, rain falls fast, fireflies drift slow, etc).
+  // Wrapping on both bounds (not just the top) means a mid-transition sign
+  // flip through zero just settles the motes instead of glitching them.
   if(particleMesh){
     const pos=particleMesh.geometry.attributes.position.array;
     const spd=particleMesh.geometry.userData.spd;
-    for(let i=0;i<spd.length;i++){pos[i*3+1]+=spd[i]*dt*.2;if(pos[i*3+1]>WALL_H)pos[i*3+1]=0;}
+    const vel=ambLive.particleDir*ambLive.particleSpeedMult;
+    for(let i=0;i<spd.length;i++){
+      pos[i*3+1]+=spd[i]*dt*.2*vel;
+      if(pos[i*3+1]>WALL_H) pos[i*3+1]=0;
+      if(pos[i*3+1]<0) pos[i*3+1]=WALL_H;
+    }
     particleMesh.geometry.attributes.position.needsUpdate=true;
-    particleMesh.material.opacity=.2+Math.sin(_t*.5)*.05;
+    particleMesh.material.opacity=ambLive.particleOpacity+Math.sin(_t*.5)*.05;
   }
-  // rising embers near the hearth
+  // rising embers near the hearth — combat's preset boosts their speed and
+  // opacity instead of spawning a whole separate particle system for it.
   if(scene.userData.emberParticles){
     const rp=scene.userData.emberParticles;
     const pos=rp.geometry.attributes.position.array;
     const spd=rp.geometry.userData.spd;
-    for(let i=0;i<spd.length;i++){pos[i*3+1]+=spd[i]*dt*.35;if(pos[i*3+1]>1.6)pos[i*3+1]=0;}
+    for(let i=0;i<spd.length;i++){pos[i*3+1]+=spd[i]*dt*.35*ambLive.emberSpeedMult;if(pos[i*3+1]>1.6)pos[i*3+1]=0;}
     rp.geometry.attributes.position.needsUpdate=true;
-    rp.material.opacity=.28+Math.sin(_t*1.2)*.1;
+    rp.material.opacity=.28+ambLive.emberOpacityBoost+Math.sin(_t*1.2)*.1;
   }
   // slow rotating night sky — a calm, low-fatigue timekeeper
   if(starSphere) starSphere.rotation.y += dt*0.0026;
@@ -2870,8 +3102,8 @@ function animate() {
   if(emberMesh) emberMesh.material.emissiveIntensity = 2.3 + Math.sin(_t*4.4)*0.3;
 
   // light pulse
-  if(cLight) cLight.intensity=1.3+Math.sin(_t*.7)*.15;
-  if(mLight) mLight.intensity=0.55+Math.sin(_t*.5+1)*.1;
+  if(cLight) cLight.intensity=ambLive.cIntensity+Math.sin(_t*.7)*.15;
+  if(mLight) mLight.intensity=ambLive.mIntensity+Math.sin(_t*.5+1)*.1;
 
   renderer.render(scene,camera);
 }
@@ -3091,6 +3323,9 @@ async function initAgora(appId, room, myName, asDM, token) {
       }
       if(msg.type==='shootingStar'){
         spawnShootingStar();
+      }
+      if(msg.type==='ambiance' && AMBIANCE[msg.name]){
+        setAmbiance(msg.name, {broadcast:false}); // apply locally only — don't re-broadcast what we just received
       }
       if(msg.type==='name'&&users[uid]){
         users[uid].name=msg.name;
@@ -3346,6 +3581,10 @@ document.getElementById('mute-all-btn').addEventListener('click',async()=>{
   const b=document.getElementById('mute-all-btn');
   b.textContent = allMuted ? '🔊 Stummschaltung aufheben' : '🔇 Alle stummschalten';
   b.classList.toggle('active',allMuted);
+});
+
+document.querySelectorAll('.amb-btn').forEach(b=>{
+  b.addEventListener('click', ()=> setAmbiance(b.dataset.amb));
 });
 
 document.getElementById('btn-cam').addEventListener('click',async()=>{
