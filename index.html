@@ -1488,8 +1488,14 @@ function buildBookshelf(x,z,ry,width,bookStart) {
     let cx=6; const rowH=rowBottom-rowTop;
     while(cx<250){
       const bw=8+Math.random()*10;
+      const bh=rowH*(0.85+Math.random()*0.15);
       ctx.fillStyle=spineColors[Math.floor(Math.random()*spineColors.length)];
-      ctx.fillRect(cx,rowTop,bw,rowH*(0.85+Math.random()*0.15));
+      // Flush against rowBottom (the shelf floor for this compartment),
+      // varying height extending upward — real books of different
+      // heights standing on the same shelf. Previously flush at rowTop
+      // instead, so every spine hung from the same ceiling and varied how
+      // far down it reached — backwards from how books actually sit.
+      ctx.fillRect(cx,rowBottom-bh,bw,bh);
       cx+=bw+2;
     }
   }
