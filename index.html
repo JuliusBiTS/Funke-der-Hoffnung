@@ -1237,7 +1237,7 @@ function initScene() {
   composer = new THREE.EffectComposer(renderer);
   composer.addPass(new THREE.RenderPass(scene, camera));
   bloomPass = new THREE.UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.4, 0.78);
+    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.25, 0.92);
   composer.addPass(bloomPass);
 
   doorWallInfo = octWallDefs()[1]; // NE chamfer — the secret-room doorway
