@@ -1494,7 +1494,7 @@ function buildBookshelf(x,z,ry,width,bookStart) {
   ctx.fillStyle='#241708'; // plain recessed-shelf wood, no competing spine art
   bookXs.forEach((bx,i)=>{
     const cx=(bx+faceW/2)/faceW*256, cy=(2.2-bookYs[i])/2.1*340;
-    const cw=(BOOK_W/faceW)*256+12, ch=(BOOK_H/2.1)*340+12;
+    const cw=(BOOK_W/faceW)*256+4, ch=(BOOK_H/2.1)*340+4; // tight margin so the book fills its cutout, not floating in an oversized dark halo
     ctx.fillRect(cx-cw/2, cy-ch/2, cw, ch);
   });
   const face=new THREE.Mesh(new THREE.PlaneGeometry(faceW,faceH),
@@ -1510,16 +1510,23 @@ function buildBookshelf(x,z,ry,width,bookStart) {
   grp.position.set(x,0,z); grp.rotation.y=ry; scene.add(grp);
 }
 
-const BOOK_W=0.155, BOOK_H=0.235, BOOK_D=0.085; // shared with buildBookshelf's plank-seating math above
+// Real book-spine proportions (tall, thin), not a squat box — every
+// painted spine around it on the shelf is roughly 3-8x taller than wide,
+// and the previous shape (nearly as wide as tall, fairly deep) read as a
+// small chest or wrapped package rather than a book, no matter how the
+// surrounding wallpaper or seating was fixed.
+const BOOK_W=0.10, BOOK_H=0.33, BOOK_D=0.055; // shared with buildBookshelf's plank-seating math above
 const BOOK_SPINE_COLORS=[0x8a1f2b,0x2f6f5e,0x3a5a80,0x6b3a55,0xa4682f,0xc9a24a];
 
-// A real leather-tome look, not a flat colored decal: a properly deep box
-// (not a sliver), gilt bands near the top and bottom like binding cords —
-// ties it into the gold-trim language used everywhere else in the room
-// (frames, table rim, wall bases) — a gradient-shaded, gold-bordered
-// canvas label instead of flat fill + text, and a slight individual lean
-// so six books don't read as six copy-pasted boxes in a grid. Built as
-// its own little group so the box, bands, and label all tilt together.
+// A real leather-tome look: a gradient-shaded, gold-bordered canvas label
+// with thin gilt accent lines near the top and bottom — flat, on the
+// spine face only, like real binding-cord decoration. Earlier this was a
+// pair of 3D gold bands wrapping the entire box including its sides,
+// which is exactly what made it read as a ribbon-tied gift box instead
+// of a book — dropped in favor of the same effect baked into the texture.
+// A slight individual lean so six books don't read as six copy-pasted
+// boxes in a grid. Built as its own little group so the box and label
+// tilt together.
 function buildBookSpine(parentGrp, localX, localY, book, index) {
   const w=BOOK_W, h=BOOK_H, d=BOOK_D;
   const bookGrp=new THREE.Group();
@@ -1531,28 +1538,26 @@ function buildBookSpine(parentGrp, localX, localY, book, index) {
   bookGrp.add(boxMesh);
   bookMeshes.push(boxMesh);
 
-  [h*0.34,-h*0.34].forEach(by=>{
-    const band=new THREE.Mesh(new THREE.BoxGeometry(w+0.006,0.02,d+0.006), mat(GOLD,GOLD,1.1,0.3,0.55));
-    band.position.set(0,by,d/2);
-    bookGrp.add(band);
-  });
-
-  const c=document.createElement('canvas'); c.width=64; c.height=180;
+  const c=document.createElement('canvas'); c.width=56; c.height=200;
   const ctx=c.getContext('2d');
   const base=new THREE.Color(spineColor), edge=base.clone().multiplyScalar(0.6);
-  const grad=ctx.createLinearGradient(0,0,0,180);
+  const grad=ctx.createLinearGradient(0,0,0,200);
   grad.addColorStop(0,'#'+edge.getHexString());
   grad.addColorStop(0.5,'#'+base.getHexString());
   grad.addColorStop(1,'#'+edge.getHexString());
-  ctx.fillStyle=grad; ctx.fillRect(0,0,64,180);
-  ctx.strokeStyle='rgba(224,184,76,0.75)'; ctx.lineWidth=3;
-  ctx.strokeRect(5,5,54,170);
+  ctx.fillStyle=grad; ctx.fillRect(0,0,56,200);
+  ctx.strokeStyle='rgba(224,184,76,0.7)'; ctx.lineWidth=2;
+  ctx.strokeRect(3,3,50,194);
+  [30,170].forEach(ly=>{
+    ctx.beginPath(); ctx.moveTo(8,ly); ctx.lineTo(48,ly);
+    ctx.strokeStyle='rgba(224,184,76,0.85)'; ctx.lineWidth=2; ctx.stroke();
+  });
   ctx.fillStyle='#f2e8ca'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.translate(32,90); ctx.rotate(Math.PI/2);
-  let fontSize=18; // shrink to fit longer spine titles, same trick the wall nameplates use
-  do { ctx.font=`bold ${fontSize}px Cinzel,serif`; fontSize--; } while (ctx.measureText(book.spine).width>158 && fontSize>8);
+  ctx.translate(28,100); ctx.rotate(Math.PI/2);
+  let fontSize=17; // shrink to fit longer spine titles, same trick the wall nameplates use
+  do { ctx.font=`bold ${fontSize}px Cinzel,serif`; fontSize--; } while (ctx.measureText(book.spine).width>172 && fontSize>7);
   ctx.fillText(book.spine,0,0);
-  const label=new THREE.Mesh(new THREE.PlaneGeometry(w-0.006,h-0.006),
+  const label=new THREE.Mesh(new THREE.PlaneGeometry(w-0.004,h-0.004),
     new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c)}));
   label.position.set(0,0,d+0.001);
   bookGrp.add(label);
