@@ -1475,12 +1475,21 @@ function buildBookshelf(x,z,ry,width,bookStart) {
   const ctx=c.getContext('2d');
   ctx.fillStyle='#2a1a10'; ctx.fillRect(0,0,256,340);
   const spineColors=['#8a1f2b','#c9a24a','#2f6f5e','#3a5a80','#6b3a55','#a4682f'];
-  for(let row=0; row<4; row++){
-    let cx=6; const rowY=row*82+8, rowH=70;
+  // Painted row bands follow the SAME real plank Y positions the books
+  // stand on (plus the shelf's own top/bottom), instead of an arbitrary
+  // fixed spacing — with a fixed spacing, the painted "shelf lines" and
+  // the real plank geometry disagreed, which is exactly what made a
+  // correctly-seated real book look like it was floating between two
+  // painted rows instead of standing in one.
+  const rowBoundsWorld=[0.1,0.45,0.95,1.45,1.95,2.2];
+  const cyOf=wy=>(2.2-wy)/2.1*340;
+  for(let row=0; row<rowBoundsWorld.length-1; row++){
+    const rowTop=cyOf(rowBoundsWorld[row+1])+5, rowBottom=cyOf(rowBoundsWorld[row])-5;
+    let cx=6; const rowH=rowBottom-rowTop;
     while(cx<250){
       const bw=8+Math.random()*10;
       ctx.fillStyle=spineColors[Math.floor(Math.random()*spineColors.length)];
-      ctx.fillRect(cx,rowY,bw,rowH*(0.85+Math.random()*0.15));
+      ctx.fillRect(cx,rowTop,bw,rowH*(0.85+Math.random()*0.15));
       cx+=bw+2;
     }
   }
@@ -1553,7 +1562,10 @@ function buildBookSpine(parentGrp, localX, localY, book, index) {
     ctx.strokeStyle='rgba(224,184,76,0.85)'; ctx.lineWidth=2; ctx.stroke();
   });
   ctx.fillStyle='#f2e8ca'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.translate(28,100); ctx.rotate(Math.PI/2);
+  // Negative rotation — canvas textures get flipped vertically by default
+  // when uploaded (flipY), which inverts rotational handedness, so a
+  // positive rotation here was actually rendering the title upside down.
+  ctx.translate(28,100); ctx.rotate(-Math.PI/2);
   let fontSize=17; // shrink to fit longer spine titles, same trick the wall nameplates use
   do { ctx.font=`bold ${fontSize}px Cinzel,serif`; fontSize--; } while (ctx.measureText(book.spine).width>172 && fontSize>7);
   ctx.fillText(book.spine,0,0);
