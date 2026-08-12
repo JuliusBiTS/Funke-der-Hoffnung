@@ -187,6 +187,10 @@ body.locked #crosshair{opacity:1}
 #ball-prompt.show{opacity:1}
 .bp-key{display:inline-block;min-width:16px;padding:2px 6px;border:1px solid rgba(224,184,76,.5);background:rgba(2,4,12,.75);text-align:center;font-family:var(--fd);font-weight:700}
 
+/* FIRE PROMPT */
+#fire-prompt{position:fixed;bottom:104px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:2px;color:rgba(224,184,76,.85);z-index:200;pointer-events:none;text-transform:uppercase;opacity:0;transition:opacity .25s;white-space:nowrap;display:flex;align-items:center;gap:10px}
+#fire-prompt.show{opacity:1}
+
 /* FOCUS VIEW */
 #focus-overlay{position:fixed;left:24px;bottom:110px;width:340px;background:#000;border:1px solid rgba(224,184,76,.4);box-shadow:0 8px 30px rgba(0,0,0,.6);z-index:210;pointer-events:none}
 #focus-video{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#111}
@@ -409,6 +413,8 @@ canvas{display:block}
     <div class="recent-row" id="token-recent"></div>
     <input type="file" id="token-file" accept="image/*" style="display:none"/>
     <button class="pb" id="token-add-btn" title="F: aufnehmen/ablegen · X: entfernen (während gehalten)">➕ Token hinzufügen</button>
+    <input class="pi" id="token-label" type="text" maxlength="5" placeholder="Kurzlabel, z.B. E1"/>
+    <button class="pb" id="token-label-btn" title="Fügt einen einfachen Token ohne Bild ein, nur mit Kurztext">🏷 Label-Token hinzufügen</button>
     <div class="mstat">F: aufnehmen/ablegen · X: entfernen</div>
   </div>
 </div>
@@ -416,6 +422,7 @@ canvas{display:block}
 <div id="prox"></div>
 <div id="ball-prompt"></div>
 <div id="book-prompt"></div>
+<div id="fire-prompt"></div>
 
 <div id="focus-overlay" style="display:none">
   <video id="focus-video" autoplay muted playsinline></video>
@@ -928,6 +935,7 @@ const STONE_BLUE=0x3d5670; // fireplace stone
 // ══════════ THREE STATE ══════════
 let renderer, scene, camera, clock;
 let particleMesh, emberMesh, starSphere;
+let saltMesh, saltRainUntil=0; // group inside joke — see triggerSaltRain()
 let cLight, mLight, hearthLight;
 // Every fire/magic point light registers itself here with its steady-state
 // intensity, then one loop in animate() flickers all of them together —
@@ -1002,6 +1010,19 @@ const AMBIANCE = {
     emberSpeedMult:1, emberOpacityBoost:0,
     swayAmp:0, shakeAmp:0, lightning:false,
   },
+  // Not in the DM's mood panel — only reachable via triggerFireSurge(), the
+  // fireplace easter egg. Deliberately more intense than combat since it's
+  // brief (~15s round trip, see FIRE_SURGE_DURATION) rather than something
+  // sat inside for a whole encounter.
+  fireSurge: {
+    label:'Feuersbrunst', fogColor:0x2a0d02, fogNear:2.5, fogFar:9,
+    skyStop0:0x3a1200, skyStop1:0x6b2400, starVisibility:0,
+    ambientColor:0x2a0f02, ambientIntensity:0.7,
+    cColor:0xff7a2e, cIntensity:2.0, mColor:0xff4400, mIntensity:0.9,
+    particleColor:0xffb066, particleDir:1, particleSpeedMult:1.8, particleOpacity:0.35,
+    emberSpeedMult:2.6, emberOpacityBoost:0.35,
+    swayAmp:0, shakeAmp:0, lightning:false,
+  },
 };
 const AMBIANCE_FADE_DUR = 4.5; // seconds — slow enough to read as a mood shift, not a cut
 let currentAmbianceName = 'calm';
@@ -1068,6 +1089,27 @@ function applyAmbiance(dt){
   if (mLight) mLight.color.setHex(ambLive.mColor);
   if (particleMesh) particleMesh.material.color.setHex(ambLive.particleColor);
   starPointsLayers.forEach(l=>{ l.points.material.opacity = l.baseOpacity*ambLive.starVisibility; });
+
+  if (fireSurgeRevertAt!==null && _t>fireSurgeRevertAt) {
+    setAmbiance(fireSurgeRevertTo, {broadcast:false});
+    fireSurgeRevertAt = null;
+  }
+}
+
+// Fireplace easter egg — stand close and press R. Reuses the ambiance
+// crossfade engine for a ~15s round trip: fades into 'fireSurge', holds,
+// then fades back to whatever mood was actually active before it fired
+// (not necessarily 'calm' — respects an ongoing DM-set mood). Any player
+// can trigger it, broadcast so the whole table sees it, like shooting
+// stars/salt rain — a shared discovery, not a DM tool.
+const FIRE_INTERACT_RANGE = 1.6;
+const FIRE_SURGE_DURATION = 15; // seconds, ignite to fully back to normal
+let fireSurgeRevertAt=null, fireSurgeRevertTo=null;
+function triggerFireSurge(){
+  if (fireSurgeRevertAt!==null) return; // already burning — ignore repeat triggers
+  fireSurgeRevertTo = currentAmbianceName;
+  setAmbiance('fireSurge', {broadcast:false});
+  fireSurgeRevertAt = _t + FIRE_SURGE_DURATION - AMBIANCE_FADE_DUR; // so the fade back finishes right at +15s
 }
 
 // ══════════ SHOOTING STARS ══════════
@@ -1345,6 +1387,13 @@ document.addEventListener('keydown', e => {
     broadcastBall(true);
   }
   if (e.code === 'Escape') { closeGallery(); closeBook(); } // harmless no-ops if neither is open
+  // Fireplace easter egg — proximity-based like the ball, not crosshair-
+  // aimed. Any player can set it off, not DM-gated.
+  if (e.code === 'KeyR' && isLocked && hearthLight
+      && camera.position.distanceTo(hearthLight.position) < FIRE_INTERACT_RANGE) {
+    triggerFireSurge();
+    broadcastToken({type:'fireSurge'}, false);
+  }
 });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
 
@@ -1859,7 +1908,7 @@ function buildFireplace(x,z,ry) {
 
 // South wall, behind the players — two more player portraits
 function buildMapWall() {
-  buildFramedImage(-1.0, OCT_HW, Math.PI, 'portraits/Mira.jpg', 1792/2688, 'MIRAZ MIRA');
+  buildFramedImage(-1.0, OCT_HW, Math.PI, 'portraits/Mira.jpg', 1792/2688, 'MYRAZMIRA NITÉ');
   buildFramedImage( 1.0, OCT_HW, Math.PI, 'portraits/Thavir.jpg', 896/1344, 'THAVIR VINDARIEL');
 }
 
@@ -1867,8 +1916,8 @@ function buildMapWall() {
 // (SE, SW, NW — the ones not already claimed by the map, library or hearth).
 function buildPortraits() {
   buildPortrait(3, 'portraits/Athanor.jpg', 944/1408, 'ATHANOR ALINEA');
-  buildPortrait(5, 'portraits/Tharik.jpg', 1792/2688, 'THARIK BORKHEIMER');
-  buildPortrait(7, 'portraits/Ranz.jpg', 1080/1620, 'RANZ VOM SÄBELMALMKLAN');
+  buildPortrait(5, 'portraits/Tharik.jpg', 1792/2688, 'TARIK BORGHEIMER');
+  buildPortrait(7, 'portraits/Ranz.jpg', 1080/1620, 'RANZ VOM SÄBELMALMCLAN');
 }
 
 function buildPortrait(wallIndex, url, aspect, name) {
@@ -2083,11 +2132,30 @@ function mapUVToWorld(u, v) {
   return battleMapMesh.localToWorld(local);
 }
 
-function makeTokenMesh(url, color) {
+// A blank token's "image" — a short label (e.g. "E1") painted onto a disc
+// in the category color, built locally from plain text/color instead of an
+// uploaded image. Every client regenerates the same texture from the same
+// label+category (like the shooting-star pattern), so there's no image
+// data to upload or broadcast at all.
+function makeLabelTexture(label, color) {
+  const c=document.createElement('canvas'); c.width=128; c.height=128;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#'+new THREE.Color(color).getHexString();
+  ctx.beginPath(); ctx.arc(64,64,62,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#161310';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  let fontSize=54;
+  do { ctx.font=`bold ${fontSize}px Cinzel,serif`; fontSize--; } while (ctx.measureText(label).width>100 && fontSize>10);
+  ctx.fillText(label, 64, 70);
+  return new THREE.CanvasTexture(c);
+}
+
+function makeTokenMesh(url, color, label) {
   const grp = new THREE.Group();
+  const map = label ? makeLabelTexture(label, color) : new THREE.TextureLoader().load(url);
   const disc = new THREE.Mesh(
     new THREE.CircleGeometry(TOKEN_RADIUS, 24),
-    new THREE.MeshBasicMaterial({map:new THREE.TextureLoader().load(url)}));
+    new THREE.MeshBasicMaterial({map}));
   disc.rotation.x=-Math.PI/2;
   grp.add(disc);
   const ring = new THREE.Mesh(
@@ -2099,12 +2167,13 @@ function makeTokenMesh(url, color) {
 }
 
 const TOKEN_COLORS = {player:TEAL, ally:EMERALD, enemy:EMBER, companion:ORANGE};
-const TOKEN_SCALES = {small:0.7, medium:1.0, large:1.5};
+// small = 25% of the old small (0.7), medium = 75% of the old small, large = the old medium (1.0) — a straight rescale down, requested because tokens overall read as too big.
+const TOKEN_SCALES = {small:0.175, medium:0.525, large:1.0};
 
-function addToken(id, url, u, v, category, size, broadcast) {
+function addToken(id, url, u, v, category, size, broadcast, label) {
   if (tokens[id]) return; // already exists locally (e.g. echo of our own broadcast never happens, but late-join resync could repeat)
   const color = TOKEN_COLORS[category] || EMBER;
-  const {grp, disc} = makeTokenMesh(url, color);
+  const {grp, disc} = makeTokenMesh(url, color, label);
   const scale = TOKEN_SCALES[size] || 1.0;
   // The disc/ring are rotated -90° on X to lie flat, which maps their
   // local Y-radius onto the group's Z axis, not Y (Y becomes the vertical/
@@ -2115,8 +2184,11 @@ function addToken(id, url, u, v, category, size, broadcast) {
   disc.userData.tokenId = id;
   grp.position.copy(mapUVToWorld(u, v));
   scene.add(grp);
-  tokens[id] = {grp, disc, url, u, v, category, size, lastBroadcast:0};
-  if (broadcast) broadcastToken({type:'tokenAdd', id, url, u, v, category, size}, true);
+  tokens[id] = {grp, disc, url, u, v, category, size, label, lastBroadcast:0};
+  // Blank/label tokens carry no url at all — every client paints the same
+  // texture locally from category+label, so there's no image to upload or
+  // transfer over the data channel, unlike the Cloudinary-hosted image flow.
+  if (broadcast) broadcastToken({type:'tokenAdd', id, url, u, v, category, size, label}, true);
 }
 
 function moveToken(id, u, v, broadcast, reliable) {
@@ -2407,7 +2479,29 @@ function buildParticles() {
   const emberPart=new THREE.Points(rg,new THREE.PointsMaterial({color:EMBER,size:.02,transparent:true,opacity:.4}));
   scene.add(emberPart);
   scene.userData.emberParticles=emberPart;
+
+  // salt rain — group inside joke, see triggerSaltRain(). Built once here
+  // and just toggled visible for a window, like the other particle systems,
+  // rather than allocated fresh on every mute-all click.
+  const S=220, spos=new Float32Array(S*3), sspd=new Float32Array(S);
+  for(let i=0;i<S;i++){
+    spos[i*3]  = (Math.random()-.5)*OCT_HW*1.7;
+    spos[i*3+1]= Math.random()*WALL_H;
+    spos[i*3+2]= (Math.random()-.5)*OCT_HW*1.7;
+    sspd[i]    = 1.6+Math.random()*1.2;
+  }
+  const sg=new THREE.BufferGeometry();
+  sg.setAttribute('position',new THREE.BufferAttribute(spos,3));
+  sg.userData.spd=sspd;
+  saltMesh=new THREE.Points(sg,new THREE.PointsMaterial({color:0xf4f1e8,size:.02,transparent:true,opacity:.8}));
+  saltMesh.visible=false;
+  scene.add(saltMesh);
 }
+
+// Group inside joke: 10 seconds of white salt grains raining through the
+// whole room, triggered whenever the DM uses the mute-all button (both
+// locally and via the broadcast every other client receives).
+function triggerSaltRain(){ saltRainUntil = _t + 10; }
 
 // ══════════ AVATAR ══════════
 function makeAvatar(asDM) {
@@ -3047,6 +3141,17 @@ function animate() {
     }
   }
 
+  // Fire prompt — proximity-based like the ball. Hidden while already
+  // burning so it doesn't invite mashing R for no further effect.
+  const firePromptEl=document.getElementById('fire-prompt');
+  if (fireSurgeRevertAt===null && hearthLight
+      && camera.position.distanceTo(hearthLight.position) < FIRE_INTERACT_RANGE) {
+    firePromptEl.innerHTML='<span class="bp-key">R</span> Entfachen';
+    firePromptEl.classList.add('show');
+  } else {
+    firePromptEl.classList.remove('show');
+  }
+
   // ambiance — crossfades fog/lights/sky/particle color+opacity toward
   // whatever preset is active; must run before the particle/light blocks
   // below so they read this frame's live values, not last frame's.
@@ -3078,6 +3183,26 @@ function animate() {
     for(let i=0;i<spd.length;i++){pos[i*3+1]+=spd[i]*dt*.35*ambLive.emberSpeedMult;if(pos[i*3+1]>1.6)pos[i*3+1]=0;}
     rp.geometry.attributes.position.needsUpdate=true;
     rp.material.opacity=.28+ambLive.emberOpacityBoost+Math.sin(_t*1.2)*.1;
+  }
+  // salt rain — inside joke, see triggerSaltRain(). Just a visibility
+  // window on an always-built particle system, independent of whatever
+  // ambiance is active.
+  if(saltMesh){
+    const active = _t < saltRainUntil;
+    saltMesh.visible = active;
+    if(active){
+      const pos=saltMesh.geometry.attributes.position.array;
+      const spd=saltMesh.geometry.userData.spd;
+      for(let i=0;i<spd.length;i++){
+        pos[i*3+1]-=spd[i]*dt;
+        if(pos[i*3+1]<0){
+          pos[i*3+1]=WALL_H;
+          pos[i*3]=(Math.random()-.5)*OCT_HW*1.7;
+          pos[i*3+2]=(Math.random()-.5)*OCT_HW*1.7;
+        }
+      }
+      saltMesh.geometry.attributes.position.needsUpdate=true;
+    }
   }
   // slow rotating night sky — a calm, low-fatigue timekeeper
   if(starSphere) starSphere.rotation.y += dt*0.0026;
@@ -3313,7 +3438,7 @@ async function initAgora(appId, room, myName, asDM, token) {
         setBattleMap(msg.url||null);
       }
       if(msg.type==='tokenAdd'){
-        addToken(msg.id, msg.url, msg.u, msg.v, msg.category, msg.size, false);
+        addToken(msg.id, msg.url, msg.u, msg.v, msg.category, msg.size, false, msg.label);
       }
       if(msg.type==='tokenMove'){
         moveToken(msg.id, msg.u, msg.v, false);
@@ -3326,6 +3451,12 @@ async function initAgora(appId, room, myName, asDM, token) {
       }
       if(msg.type==='ambiance' && AMBIANCE[msg.name]){
         setAmbiance(msg.name, {broadcast:false}); // apply locally only — don't re-broadcast what we just received
+      }
+      if(msg.type==='saltRain'){
+        triggerSaltRain();
+      }
+      if(msg.type==='fireSurge'){
+        triggerFireSurge();
       }
       if(msg.type==='name'&&users[uid]){
         users[uid].name=msg.name;
@@ -3581,6 +3712,10 @@ document.getElementById('mute-all-btn').addEventListener('click',async()=>{
   const b=document.getElementById('mute-all-btn');
   b.textContent = allMuted ? '🔊 Stummschaltung aufheben' : '🔇 Alle stummschalten';
   b.classList.toggle('active',allMuted);
+  // Group inside joke — a brief rain of white salt grains, every time this
+  // button is used, for everyone.
+  triggerSaltRain();
+  broadcastToken({type:'saltRain'}, false);
 });
 
 document.querySelectorAll('.amb-btn').forEach(b=>{
@@ -3811,6 +3946,18 @@ document.getElementById('token-file').addEventListener('change', async(e)=>{
   }catch(err){
     console.warn('token upload failed:', err);
   }
+});
+
+document.getElementById('token-label-btn').addEventListener('click',()=>{
+  const input=document.getElementById('token-label');
+  const label=input.value.trim().toUpperCase();
+  if(!label) return;
+  const id=Date.now()+'-'+Math.floor(Math.random()*1e6);
+  const u=0.5+(Math.random()-0.5)*0.1, v=0.5+(Math.random()-0.5)*0.1;
+  const category=document.getElementById('token-category').value;
+  const size=document.getElementById('token-size').value;
+  addToken(id, null, u, v, category, size, true, label);
+  input.value='';
 });
 
 document.getElementById('btn-leave').addEventListener('click',async()=>{
