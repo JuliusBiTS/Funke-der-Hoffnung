@@ -985,10 +985,16 @@ const jrPlatforms = [
   {x:JR_BASE_X-1.8,  z:JR_BASE_Z-16,   hw:1.0, hd:1.0, y:1.5},
   {x:JR_BASE_X,      z:JR_BASE_Z-21,   hw:1.6, hd:1.6, y:1.5},  // pre-ramp landing
   {x:JR_BASE_X,      z:JR_BASE_Z-38,   hw:2.5, hd:2.5, y:0},    // post-ramp runway
-  {x:JR_BASE_X+3,    z:JR_BASE_Z-43,   hw:1.0, hd:1.0, y:0.6},
-  {x:JR_BASE_X-3,    z:JR_BASE_Z-47,   hw:1.0, hd:1.0, y:1.1},
-  {x:JR_BASE_X,      z:JR_BASE_Z-52,   hw:1.3, hd:1.3, y:0.6},
-  {x:JR_BASE_X,      z:JR_BASE_Z-58,   hw:3.5, hd:3.5, y:0},    // finish
+  // This whole tail used to swing ±3 in X between hops (on top of the Z
+  // gap) — a rider landing here center-to-center, not corner-to-corner,
+  // faced something much closer to a ~5.8-unit diagonal than the ~1.5-2
+  // unit hops used everywhere else in the course. Cut the X swing to
+  // ±1.5, grew the pads a bit, and kept real (but consistent, ~1.3-1.7
+  // unit) gaps between them instead.
+  {x:JR_BASE_X+1.5,  z:JR_BASE_Z-43,   hw:1.2, hd:1.2, y:0.6},
+  {x:JR_BASE_X-1.5,  z:JR_BASE_Z-47,   hw:1.2, hd:1.2, y:1.1},
+  {x:JR_BASE_X,      z:JR_BASE_Z-51,   hw:1.4, hd:1.4, y:0.6},
+  {x:JR_BASE_X,      z:JR_BASE_Z-56,   hw:3.5, hd:3.5, y:0},    // finish
 ];
 // Ramps slope purely along Z (no X tilt) — a deliberate scope cut so the
 // slope math stays a single lerp instead of a general inclined-plane
@@ -1000,7 +1006,7 @@ const jrCheckpoints = [
   {x:JR_BASE_X,      z:JR_BASE_Z-6,  y:0.4},
   {x:JR_BASE_X-1.8,  z:JR_BASE_Z-16, y:1.5},
   {x:JR_BASE_X,      z:JR_BASE_Z-38, y:0},
-  {x:JR_BASE_X,      z:JR_BASE_Z-58, y:0}, // finish
+  {x:JR_BASE_X,      z:JR_BASE_Z-56, y:0}, // finish — matches the relocated finish platform above
 ];
 const JR_CHECKPOINT_R = 1.6;
 
