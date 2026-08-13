@@ -3649,20 +3649,24 @@ async function toggleStream(){
   }
   try{
     stat.textContent='Browser-Tab auswählen…';
-    const tracks=await AgoraRTC.createScreenVideoTrack({encoderConfig:'1080p_1'},'enable');
-    const [sv,sa]=Array.isArray(tracks)?tracks:[tracks,null];
-    sv.stop(); sv.close();
-    if(!sa){stat.textContent='Kein Tab-Audio — "Tab-Ton teilen" im Dialog aktivieren';return;}
-    // createScreenVideoTrack's own audio track can't be given an
-    // encoderConfig — checked directly against this SDK's source, it's
-    // hardcoded to none — so it always falls back to Agora's default,
-    // voice-call-tuned profile (mono, low bitrate). Re-wrapping the same
-    // captured audio as a custom track lets us actually request a music
-    // profile. Clone the raw MediaStreamTrack first: closing the original
-    // screen-audio wrapper stops its underlying track, which would kill
-    // the new one too if they still shared it.
-    const rawTrack = sa.getMediaStreamTrack().clone();
-    sa.close();
+    // Capturing via the browser's own getDisplayMedia directly, instead of
+    // AgoraRTC.createScreenVideoTrack() — that call requests tab audio with
+    // a bare `audio:true`, which leaves Chrome free to apply its own
+    // default mic-style processing (echo cancellation/noise suppression/
+    // auto-gain) to the tab's audio. That's the actual reason it still
+    // sounded like a phone call even after fixing the Agora encode profile
+    // below: this DSP runs at capture time, upstream of anything Agora
+    // does with it. There's no way to pass these overrides through
+    // createScreenVideoTrack — checked against the SDK source, its
+    // internal capture call hardcodes the bare boolean.
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: {echoCancellation:false, noiseSuppression:false, autoGainControl:false,
+        channelCount:{ideal:2}, sampleRate:{ideal:48000}}
+    });
+    stream.getVideoTracks().forEach(t=>t.stop());
+    const rawTrack = stream.getAudioTracks()[0];
+    if(!rawTrack){stat.textContent='Kein Tab-Audio — "Tab-Ton teilen" im Dialog aktivieren';return;}
     screenAudio = await AgoraRTC.createCustomAudioTrack({mediaStreamTrack: rawTrack, encoderConfig:'high_quality_stereo'});
     // Published from a second client on a derived uid — see MUSIC_UID_OFFSET
     // — so the receiving end never has to guess which of this uid's tracks
