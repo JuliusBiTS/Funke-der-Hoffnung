@@ -389,6 +389,7 @@ canvas{display:block}
       <button class="amb-btn" data-amb="storm">Sturm</button>
       <button class="amb-btn" data-amb="sea">Hohe See</button>
       <button class="amb-btn" data-amb="forest">Wald</button>
+      <button class="amb-btn" data-amb="desert">Wüste</button>
       <button class="amb-btn" data-amb="temple">Tempel</button>
       <button class="amb-btn" data-amb="dungeon">Dungeon</button>
     </div>
@@ -1107,6 +1108,19 @@ const AMBIANCE = {
     ambientColor:0x131f0e, ambientIntensity:0.55,
     cColor:0x9fd070, cIntensity:1.0, mColor:0x4f8a4f, mIntensity:0.5,
     particleColor:0xc9e07a, particleDir:1, particleSpeedMult:0.55, particleOpacity:0.24,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp:0, shakeAmp:0, lightning:false,
+  },
+  // Sun-bright and dry instead of every other preset's dim/moody register —
+  // no stars (broad daylight), a brighter-than-calm cLight standing in for
+  // direct sun, and faster/denser particles for blowing sand rather than
+  // lazily drifting dust.
+  desert: {
+    label:'Wüste', fogColor:0xc48f52, fogNear:6, fogFar:19,
+    skyStop0:0x8a5a2e, skyStop1:0xe8c07a, starVisibility:0,
+    ambientColor:0x4a3620, ambientIntensity:0.65,
+    cColor:0xe8a858, cIntensity:1.4, mColor:0xb85f3a, mIntensity:0.5,
+    particleColor:0xe0c896, particleDir:1, particleSpeedMult:0.7, particleOpacity:0.3,
     emberSpeedMult:1, emberOpacityBoost:0,
     swayAmp:0, shakeAmp:0, lightning:false,
   },
