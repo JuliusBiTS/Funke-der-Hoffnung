@@ -3415,6 +3415,23 @@ function onResize(){
   camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth,window.innerHeight);
+  layoutGmPanel();
+}
+
+// The DM panel's CSS max-height is a fixed-pixel guess (fallback for before
+// this ever runs) tuned against one test viewport — it undershot on an
+// actual DM laptop with a shorter real browser viewport (taskbar + browser
+// chrome eating into a non-maximized window), so the panel still reached
+// down into the control bar. Measuring both elements' real, current
+// bounding boxes and setting the exact gap between them is robust to any
+// screen size/zoom/browser-chrome combination instead of guessing a number.
+function layoutGmPanel(){
+  const gm=document.getElementById('gm'), ctrl=document.getElementById('ctrl');
+  if(!gm || gm.style.display==='none' || !ctrl || ctrl.style.display==='none') return;
+  const gmTop=gm.getBoundingClientRect().top;
+  const ctrlTop=ctrl.getBoundingClientRect().top;
+  const gap=14;
+  gm.style.maxHeight=Math.max(120, ctrlTop-gmTop-gap)+'px';
 }
 
 // ══════════ AGORA ══════════
@@ -3906,6 +3923,7 @@ document.getElementById('join-btn').addEventListener('click', async()=>{
       // renderWhisperList) can't be picked as a target either.
       document.getElementById('btn-whisper').style.display='none';
     }
+    layoutGmPanel(); // after the DM-only buttons above are shown — they change #ctrl's real size
   }catch(e){
     console.error(e);
     // The channel join itself can succeed before media acquisition fails —
