@@ -226,7 +226,7 @@ body.locked #crosshair{opacity:1}
 
 #gallery-panel{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;z-index:220;background:rgba(2,4,12,.88)}
 #gallery-close-hint{font-size:10px;letter-spacing:2px;color:rgba(224,184,76,.55);text-transform:uppercase;margin-bottom:16px}
-#gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;width:min(1700px,94vw);max-height:82vh;overflow-y:auto;padding:4px 24px}
+#gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:20px;width:min(1900px,96vw);max-height:88vh;overflow-y:auto;padding:4px 24px}
 .gal-tile{position:relative;background:#111;border:1px solid rgba(224,184,76,.3);cursor:pointer;transition:border-color .15s}
 .gal-tile:hover{border-color:var(--c)}
 .gal-tile.speaking{border-color:var(--g);box-shadow:0 0 16px rgba(62,207,110,.5)}
@@ -3168,11 +3168,12 @@ function setFocus(uid) {
   wrap.style.display='block';
 }
 
-// Only remote users currently streaming video are worth a tile — someone
-// on mic-only has nothing to show, and (matching setFocus above) that's
-// not worth a dedicated empty-state placeholder.
+// Anyone currently streaming video gets a tile — local included, so
+// players can see themselves in the PIP strip and gallery too, same as
+// everyone else. Someone on mic-only has nothing to show, and (matching
+// setFocus above) that's not worth a dedicated empty-state placeholder.
 function galleryEntries() {
-  return Object.entries(users).filter(([,u]) => !u.isLocal && u.videoEl);
+  return Object.entries(users).filter(([,u]) => u.videoEl);
 }
 
 function makeGalleryVideo(u) {
@@ -4214,6 +4215,8 @@ async function initAgora(appId, room, myName, asDM, token) {
     vel.srcObject=new MediaStream([localVideo.getMediaStreamTrack()]);
     vel.play().catch(()=>{});
     attachVideoToAvatar(users[localUID],vel);
+    users[localUID].videoEl=vel; // reused for PIP/gallery, same as remote users — see the 'user-published' handler
+    renderPip();
   }catch(e){}
 
   sendName(myName,asDM);
