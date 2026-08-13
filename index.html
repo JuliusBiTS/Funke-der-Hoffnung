@@ -3636,6 +3636,10 @@ async function toggleStream(){
     sv.stop(); sv.close();
     if(!sa){stat.textContent='Kein Tab-Audio — "Tab-Ton teilen" im Dialog aktivieren';return;}
     screenAudio=sa;
+    // Without this, Agora encodes with its default voice-call profile —
+    // mono, low bitrate, narrow band — which is fine for a mic but
+    // noticeably squashes actual music. Must be set before publish().
+    sa.setAudioProfile('music_high_quality_stereo');
     // Published from a second client on a derived uid — see MUSIC_UID_OFFSET
     // — so the receiving end never has to guess which of this uid's tracks
     // is the mic and which is the music.
