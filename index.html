@@ -365,6 +365,8 @@ canvas{display:block}
       <button class="amb-btn" data-amb="storm">Sturm</button>
       <button class="amb-btn" data-amb="sea">Hohe See</button>
       <button class="amb-btn" data-amb="forest">Wald</button>
+      <button class="amb-btn" data-amb="temple">Tempel</button>
+      <button class="amb-btn" data-amb="dungeon">Dungeon</button>
     </div>
   </div>
   <div class="gm-sec">
@@ -1007,6 +1009,29 @@ const AMBIANCE = {
     ambientColor:0x131f0e, ambientIntensity:0.55,
     cColor:0x9fd070, cIntensity:1.0, mColor:0x4f8a4f, mIntensity:0.5,
     particleColor:0xc9e07a, particleDir:1, particleSpeedMult:0.55, particleOpacity:0.24,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp:0, shakeAmp:0, lightning:false,
+  },
+  // Jade + aged-gold, deliberately more saturated/ornate than forest's
+  // natural yellow-green — reads as carved stone and old bronze, not woods.
+  temple: {
+    label:'Tempel', fogColor:0x0f2018, fogNear:4, fogFar:12,
+    skyStop0:0x111f16, skyStop1:0x3a4a1e, starVisibility:0,
+    ambientColor:0x16220f, ambientIntensity:0.55,
+    cColor:0x5fae7a, cIntensity:1.1, mColor:0xc9a24a, mIntensity:0.6,
+    particleColor:0xc9d98a, particleDir:1, particleSpeedMult:0.5, particleOpacity:0.24,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp:0, shakeAmp:0, lightning:false,
+  },
+  // Tight fog range (short far distance) does most of the "cramped tunnel"
+  // work; particles are slow, sparse drips (low speedMult+opacity), not
+  // rain — storm's downpour would read as a second storm, not a dungeon.
+  dungeon: {
+    label:'Dungeon', fogColor:0x14171c, fogNear:2.2, fogFar:7,
+    skyStop0:0x05070a, skyStop1:0x11151c, starVisibility:0,
+    ambientColor:0x0c0f13, ambientIntensity:0.4,
+    cColor:0x6f7a86, cIntensity:0.7, mColor:0x4a5560, mIntensity:0.4,
+    particleColor:0x9fc4d6, particleDir:-1, particleSpeedMult:0.35, particleOpacity:0.14,
     emberSpeedMult:1, emberOpacityBoost:0,
     swayAmp:0, shakeAmp:0, lightning:false,
   },
