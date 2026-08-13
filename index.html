@@ -3649,17 +3649,23 @@ async function toggleStream(){
     const [sv,sa]=Array.isArray(tracks)?tracks:[tracks,null];
     sv.stop(); sv.close();
     if(!sa){stat.textContent='Kein Tab-Audio — "Tab-Ton teilen" im Dialog aktivieren';return;}
-    screenAudio=sa;
-    // Without this, Agora encodes with its default voice-call profile —
-    // mono, low bitrate, narrow band — which is fine for a mic but
-    // noticeably squashes actual music. Must be set before publish().
-    sa.setAudioProfile('music_high_quality_stereo');
+    // createScreenVideoTrack's own audio track can't be given an
+    // encoderConfig — checked directly against this SDK's source, it's
+    // hardcoded to none — so it always falls back to Agora's default,
+    // voice-call-tuned profile (mono, low bitrate). Re-wrapping the same
+    // captured audio as a custom track lets us actually request a music
+    // profile. Clone the raw MediaStreamTrack first: closing the original
+    // screen-audio wrapper stops its underlying track, which would kill
+    // the new one too if they still shared it.
+    const rawTrack = sa.getMediaStreamTrack().clone();
+    sa.close();
+    screenAudio = await AgoraRTC.createCustomAudioTrack({mediaStreamTrack: rawTrack, encoderConfig:'high_quality_stereo'});
     // Published from a second client on a derived uid — see MUSIC_UID_OFFSET
     // — so the receiving end never has to guess which of this uid's tracks
     // is the mic and which is the music.
     musicClient=AgoraRTC.createClient({mode:'rtc',codec:'vp8'});
     await musicClient.join(joinedAppId, joinedRoom, joinedToken, localUID + MUSIC_UID_OFFSET);
-    await musicClient.publish(sa);
+    await musicClient.publish(screenAudio);
     streaming=true;
     document.getElementById('share-btn').textContent='⏹ Stoppen';
     stat.textContent='▶ Musik streamt für alle'; stat.className='mstat on';
