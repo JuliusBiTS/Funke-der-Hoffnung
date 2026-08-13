@@ -164,9 +164,17 @@ body.locked #crosshair{opacity:1}
 .amb-btn.active{border-color:var(--c);color:var(--c);box-shadow:0 0 10px rgba(224,184,76,.3)}
 .mstat{font-size:9px;letter-spacing:1px;color:rgba(58,160,196,.45);text-align:center;padding:6px 0 2px}
 .mstat.on{color:var(--g)}
+.gstt-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+.gstt-row .gstt{margin-bottom:0}
+.rm-toggle{background:transparent;border:1px solid rgba(58,160,196,.28);color:rgba(58,160,196,.5);font-size:11px;padding:2px 7px;line-height:1.6;cursor:pointer;transition:all .15s}
+.rm-toggle:hover{border-color:var(--r);color:var(--r)}
+.rm-toggle.active{border-color:var(--r);color:var(--r);background:rgba(209,73,91,.15);box-shadow:0 0 8px rgba(209,73,91,.3)}
 .recent-row{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px}
 .recent-thumb{width:36px;height:36px;object-fit:cover;border:1px solid rgba(58,160,196,.3);cursor:pointer;transition:border-color .15s,transform .15s}
 .recent-thumb:hover{border-color:var(--m);transform:scale(1.08)}
+/* Remove-mode — thumbnails read as "about to delete" instead of "click to reuse" */
+.recent-row.rm-mode .recent-thumb{border-color:rgba(209,73,91,.5)}
+.recent-row.rm-mode .recent-thumb:hover{border-color:var(--r);transform:scale(0.94);filter:brightness(.65) saturate(1.3)}
 .ifw{margin-top:8px}
 .ifw iframe{width:100%;border:1px solid rgba(58,160,196,.15)}
 
@@ -392,7 +400,10 @@ canvas{display:block}
     <div class="mstat" id="mstat">Inaktiv — Tab im Browser auswählen</div>
   </div>
   <div class="gm-sec">
-    <div class="gstt">Kampfkarte</div>
+    <div class="gstt-row">
+      <div class="gstt">Kampfkarte</div>
+      <button class="rm-toggle" id="map-recent-rm-toggle" title="Entfernen-Modus für gespeicherte Karten">🗑</button>
+    </div>
     <div class="recent-row" id="map-recent"></div>
     <input type="file" id="map-file" accept="image/*" style="display:none"/>
     <button class="pb" id="map-upload-btn">🗺 Karte hochladen</button>
@@ -400,7 +411,10 @@ canvas{display:block}
     <div class="mstat" id="map-stat">Keine Karte aktiv</div>
   </div>
   <div class="gm-sec">
-    <div class="gstt">Token</div>
+    <div class="gstt-row">
+      <div class="gstt">Token</div>
+      <button class="rm-toggle" id="token-recent-rm-toggle" title="Entfernen-Modus für gespeicherte Token">🗑</button>
+    </div>
     <select class="pi" id="token-category">
       <option value="player">Spieler (Teal)</option>
       <option value="ally">Verbündeter (Grün)</option>
@@ -3898,14 +3912,27 @@ function addRecentToken(url, category, size) {
   data.tokens=[{url,category,size}, ...data.tokens.filter(t=>t.url!==url)].slice(0,12);
   saveRecent(data); renderRecentTokens();
 }
+// Remove-mode is a toggle the DM has to explicitly switch on before a
+// thumbnail click deletes anything — a plain click always just reuses the
+// map/token, so nothing gets wiped by an accidental click during normal
+// play. Off by default.
+let mapRemoveMode=false, tokenRemoveMode=false;
+
 function renderRecentMaps() {
   const el=document.getElementById('map-recent');
   if(!el) return;
   el.innerHTML='';
   loadRecent().maps.forEach(m=>{
     const img=document.createElement('img');
-    img.src=m.url; img.className='recent-thumb'; img.title='Erneut verwenden';
+    img.src=m.url; img.className='recent-thumb';
+    img.title = mapRemoveMode ? 'Entfernen' : 'Erneut verwenden';
     img.addEventListener('click', async()=>{
+      if (mapRemoveMode) {
+        const data=loadRecent();
+        data.maps = data.maps.filter(x=>x.url!==m.url);
+        saveRecent(data); renderRecentMaps();
+        return;
+      }
       setBattleMap(m.url);
       await broadcastMap(m.url);
       document.getElementById('map-stat').textContent='▶ Karte aktiv';
@@ -3921,8 +3948,15 @@ function renderRecentTokens() {
   el.innerHTML='';
   loadRecent().tokens.forEach(t=>{
     const img=document.createElement('img');
-    img.src=t.url; img.className='recent-thumb'; img.title='Erneut hinzufügen';
+    img.src=t.url; img.className='recent-thumb';
+    img.title = tokenRemoveMode ? 'Entfernen' : 'Erneut hinzufügen';
     img.addEventListener('click', ()=>{
+      if (tokenRemoveMode) {
+        const data=loadRecent();
+        data.tokens = data.tokens.filter(x=>x.url!==t.url);
+        saveRecent(data); renderRecentTokens();
+        return;
+      }
       const id=Date.now()+'-'+Math.floor(Math.random()*1e6);
       const u=0.5+(Math.random()-0.5)*0.1, v=0.5+(Math.random()-0.5)*0.1;
       addToken(id, t.url, u, v, t.category, t.size, true);
@@ -3958,6 +3992,19 @@ document.getElementById('map-clear-btn').addEventListener('click', async()=>{
   document.getElementById('map-stat').textContent='Keine Karte aktiv';
   document.getElementById('map-stat').className='mstat';
   document.getElementById('map-clear-btn').style.display='none';
+});
+
+document.getElementById('map-recent-rm-toggle').addEventListener('click', ()=>{
+  mapRemoveMode = !mapRemoveMode;
+  document.getElementById('map-recent-rm-toggle').classList.toggle('active', mapRemoveMode);
+  document.getElementById('map-recent').classList.toggle('rm-mode', mapRemoveMode);
+  renderRecentMaps(); // refreshes each thumbnail's title/tooltip for the new mode
+});
+document.getElementById('token-recent-rm-toggle').addEventListener('click', ()=>{
+  tokenRemoveMode = !tokenRemoveMode;
+  document.getElementById('token-recent-rm-toggle').classList.toggle('active', tokenRemoveMode);
+  document.getElementById('token-recent').classList.toggle('rm-mode', tokenRemoveMode);
+  renderRecentTokens();
 });
 
 document.getElementById('token-add-btn').addEventListener('click',()=>{
