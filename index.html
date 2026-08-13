@@ -3721,8 +3721,14 @@ async function broadcastPos(){
     // This SDK build silently drops the message if the returned promise is
     // never awaited — no throw, no rejection, it just never reaches anyone.
     // unreliable: high-frequency (20/s), only the latest position matters.
+    // y is sent ground-relative (0 = standing, positive = jump height) —
+    // playerPos.y itself is absolute (never below EYE_H, per the ground
+    // clamp above), but every receiver (remote avatar Y, and the spatial
+    // panner's own "+EYE_H" ear-height compensation) already expects 0 at
+    // the floor, so subtract EYE_H here rather than resending the raw
+    // absolute value.
     await agoraClient.sendStreamMessage(
-      new TextEncoder().encode(JSON.stringify({type:'pos',x:playerPos.x,z:playerPos.z,y:playerPos.y,yaw})), false);
+      new TextEncoder().encode(JSON.stringify({type:'pos',x:playerPos.x,z:playerPos.z,y:playerPos.y-EYE_H,yaw})), false);
     if(users[localUID]?.grp){
       users[localUID].grp.position.x=playerPos.x;
       users[localUID].grp.position.z=playerPos.z;
