@@ -328,11 +328,11 @@ canvas{display:block}
   <button class="cb" id="btn-mic">🎤 <span>Mic</span></button>
   <button class="cb" id="btn-cam">📷 <span>Kamera</span></button>
   <button class="cb" id="btn-audiomode" title="Zwischen räumlichem Klang und gleicher Lautstärke für alle wechseln">🎧 <span>Räumlich</span></button>
-  <button class="cb" id="btn-tactical" title="Taktische Draufsicht auf den Kampftisch (Hotkey: Tab)">🗺 <span>Taktische Ansicht</span></button>
+  <button class="cb" id="btn-tactical" title="Taktische Draufsicht auf den Kampftisch (Hotkey: T)">🗺 <span>Taktische Ansicht</span></button>
   <button class="cb" id="btn-fov" title="Sichtfeld anpassen — mehr sehen auf Kosten der Verzerrung an den Rändern">🔍 <span>Sichtfeld</span></button>
   <button class="cb" id="btn-vol" title="Lautstärke einzelner Personen anpassen">🔊 <span>Lautstärke</span></button>
   <button class="cb" id="btn-gallery" title="Alle Kameras auf einen Blick (Hotkey: G)">🖼 <span>Galerie</span></button>
-  <button class="cb" id="btn-whisper" title="Kurz privat mit einer Person sprechen, ohne die Gruppe abzulenken (Hotkey: T)">🤫 <span>Flüstern</span></button>
+  <button class="cb" id="btn-whisper" title="Kurz privat mit einer Person sprechen, ohne die Gruppe abzulenken (Hotkey: Z)">🤫 <span>Flüstern</span></button>
   <button class="cb" id="btn-jumps" title="Springen anderer ein-/ausblenden, nur für dich">🦘 <span>Sprünge</span></button>
   <div class="cb-sep"></div>
   <button class="cb dm" id="btn-music" style="display:none">🎵 <span>Musik</span></button>
@@ -1405,14 +1405,15 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyG' && isLocked) {
     document.getElementById('btn-gallery').click();
   }
-  // Tactical view hotkey — Tab would otherwise cycle browser focus, which
-  // is useless while pointer-locked and would yank focus off the page.
-  if (e.code === 'Tab' && isLocked) {
-    e.preventDefault();
+  // Tactical view hotkey. Tab was the first choice but browsers/OSes tend
+  // to reserve it for accessibility focus-cycling even during pointer lock
+  // and preventDefault() doesn't reliably stop that, so it never actually
+  // fired — T works normally.
+  if (e.code === 'KeyT' && isLocked) {
     document.getElementById('btn-tactical').click();
   }
   // Whisper hotkey — player-only, mirrors the button being hidden for the DM.
-  if (e.code === 'KeyT' && isLocked && !isDM) {
+  if (e.code === 'KeyZ' && isLocked && !isDM) {
     document.getElementById('btn-whisper').click();
   }
   // Ball — E is context-sensitive (pick up when free and in range, throw
