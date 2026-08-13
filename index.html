@@ -384,6 +384,7 @@ canvas{display:block}
     <div class="gstt">Stimmung (visuell, für alle sichtbar)</div>
     <div class="amb-row">
       <button class="amb-btn active" data-amb="calm">Ruhig</button>
+      <button class="amb-btn" data-amb="night">Nacht</button>
       <button class="amb-btn" data-amb="combat">Kampf</button>
       <button class="amb-btn" data-amb="storm">Sturm</button>
       <button class="amb-btn" data-amb="sea">Hohe See</button>
@@ -1056,6 +1057,20 @@ const AMBIANCE = {
     ambientColor:0x151109, ambientIntensity:0.6,
     cColor:GOLD, cIntensity:1.3, mColor:TEAL, mIntensity:0.55,
     particleColor:GOLD, particleDir:1, particleSpeedMult:1, particleOpacity:0.2,
+    emberSpeedMult:1, emberOpacityBoost:0,
+    swayAmp:0, shakeAmp:0, lightning:false,
+  },
+  // Same fire/candle/torch lights as every other preset (never touched by
+  // ambiance) — here that matters more than usual: they're the only warm
+  // anchor in an otherwise dim room, against a deliberately bright, clear
+  // night sky (starVisibility pushed slightly past 1, unlike every other
+  // preset, for genuinely "crystal clear" stars rather than just visible).
+  night: {
+    label:'Nacht', fogColor:0x060a14, fogNear:4, fogFar:13,
+    skyStop0:0x050a16, skyStop1:0x0e1c34, starVisibility:1.2,
+    ambientColor:0x0a0e18, ambientIntensity:0.32,
+    cColor:0x8fa8c9, cIntensity:0.55, mColor:0x3a5570, mIntensity:0.3,
+    particleColor:0xcfd9ea, particleDir:1, particleSpeedMult:0.4, particleOpacity:0.16,
     emberSpeedMult:1, emberOpacityBoost:0,
     swayAmp:0, shakeAmp:0, lightning:false,
   },
