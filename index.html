@@ -119,7 +119,7 @@ body.locked #crosshair{opacity:1}
 #diag .d-note{display:block;font-size:8px;letter-spacing:0.5px;color:rgba(224,184,76,.35);margin-top:2px}
 
 /* CONTROLS */
-#ctrl{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:rgba(2,4,12,.95);border:1px solid rgba(224,184,76,.2);padding:10px 16px;z-index:200;backdrop-filter:blur(10px)}
+#ctrl{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:rgba(2,4,12,.95);border:1px solid rgba(224,184,76,.2);padding:10px 16px;z-index:200;backdrop-filter:blur(10px);max-width:calc(100vw - 48px);overflow-x:auto}
 .cb{background:transparent;border:1px solid rgba(224,184,76,.25);color:rgba(224,184,76,.75);font-family:var(--fm);font-size:12px;letter-spacing:1px;padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .15s;text-transform:uppercase;pointer-events:auto}
 .cb:hover{background:rgba(224,184,76,.1);border-color:var(--c);color:var(--c)}
 .cb.off{border-color:rgba(209,73,91,.4);color:rgba(209,73,91,.7)}
@@ -127,6 +127,9 @@ body.locked #crosshair{opacity:1}
 .cb.dm:hover{background:rgba(58,160,196,.1);border-color:var(--m);color:var(--m)}
 .cb.str{border-color:var(--g);color:var(--g);box-shadow:0 0 10px rgba(62,207,110,.25)}
 .cb-sep{width:1px;height:26px;background:rgba(224,184,76,.12);margin:0 2px}
+
+/* FOV PANEL — reuses .vol-head/.vol-row/.vol-label from the volume panel */
+#fov-panel{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);width:260px;background:rgba(2,4,12,.97);border:1px solid rgba(224,184,76,.28);z-index:200;backdrop-filter:blur(10px)}
 
 /* VOLUME PANEL */
 #vol-panel{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);width:260px;background:rgba(2,4,12,.97);border:1px solid rgba(224,184,76,.28);z-index:200;backdrop-filter:blur(10px);max-height:280px;overflow-y:auto}
@@ -145,7 +148,7 @@ body.locked #crosshair{opacity:1}
 .whisper-row:hover{background:rgba(224,184,76,.12);color:var(--c)}
 
 /* DM PANEL */
-#gm{position:fixed;right:24px;top:70px;width:270px;max-height:calc(100vh - 100px);overflow-y:auto;background:rgba(8,14,22,.97);border:1px solid rgba(58,160,196,.28);z-index:200;backdrop-filter:blur(10px)}
+#gm{position:fixed;right:24px;top:70px;width:270px;max-height:calc(100vh - 210px);overflow-y:auto;background:rgba(8,14,22,.97);border:1px solid rgba(58,160,196,.28);z-index:200;backdrop-filter:blur(10px)}
 #gm::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--m),transparent)}
 .gm-head{padding:12px 16px;font-family:var(--fd);font-size:9px;font-weight:700;letter-spacing:4px;color:rgba(58,160,196,.85);border-bottom:1px solid rgba(58,160,196,.12);text-transform:uppercase}
 .gm-sec{padding:12px 16px;border-bottom:1px solid rgba(58,160,196,.08)}
@@ -325,7 +328,8 @@ canvas{display:block}
   <button class="cb" id="btn-mic">🎤 <span>Mic</span></button>
   <button class="cb" id="btn-cam">📷 <span>Kamera</span></button>
   <button class="cb" id="btn-audiomode" title="Zwischen räumlichem Klang und gleicher Lautstärke für alle wechseln">🎧 <span>Räumlich</span></button>
-  <button class="cb" id="btn-tactical" title="Taktische Draufsicht auf den Kampftisch">🗺 <span>Taktische Ansicht</span></button>
+  <button class="cb" id="btn-tactical" title="Taktische Draufsicht auf den Kampftisch (Hotkey: Tab)">🗺 <span>Taktische Ansicht</span></button>
+  <button class="cb" id="btn-fov" title="Sichtfeld anpassen — mehr sehen auf Kosten der Verzerrung an den Rändern">🔍 <span>Sichtfeld</span></button>
   <button class="cb" id="btn-vol" title="Lautstärke einzelner Personen anpassen">🔊 <span>Lautstärke</span></button>
   <button class="cb" id="btn-gallery" title="Alle Kameras auf einen Blick (Hotkey: G)">🖼 <span>Galerie</span></button>
   <button class="cb" id="btn-whisper" title="Kurz privat mit einer Person sprechen, ohne die Gruppe abzulenken (Hotkey: T)">🤫 <span>Flüstern</span></button>
@@ -334,6 +338,14 @@ canvas{display:block}
   <button class="cb dm" id="btn-music" style="display:none">🎵 <span>Musik</span></button>
   <div class="cb-sep" id="sep-dm" style="display:none"></div>
   <button class="cb off" id="btn-leave">✕ <span>Verlassen</span></button>
+</div>
+
+<div id="fov-panel" style="display:none">
+  <div class="vol-head">🔍 Sichtfeld</div>
+  <div class="vol-row">
+    <div class="vol-label"><span>Field of View</span><span id="fov-val">70°</span></div>
+    <input type="range" id="fov-slider" min="60" max="100" value="70"/>
+  </div>
 </div>
 
 <div id="vol-panel" style="display:none">
@@ -1252,6 +1264,13 @@ let openBookIndex = null;          // which book's reading panel is open, or nul
 const SHOW_JUMPS_KEY = 'fantasyRoomShowJumps';
 let showJumps = localStorage.getItem(SHOW_JUMPS_KEY) !== 'false'; // on by default
 
+// Field of view — wider lets a player fit more of the table/group in frame
+// at once, at the cost of more edge distortion. Same camera object serves
+// tactical view too, so this affects both by design (one "how much do I
+// see" control, not two).
+const FOV_KEY = 'fantasyRoomFov';
+let fovDeg = parseFloat(localStorage.getItem(FOV_KEY)) || 70;
+
 // player
 const playerPos = new THREE.Vector3(0, EYE_H, 3.2);
 let   yaw = Math.PI, pitch = -0.05;
@@ -1386,6 +1405,12 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyG' && isLocked) {
     document.getElementById('btn-gallery').click();
   }
+  // Tactical view hotkey — Tab would otherwise cycle browser focus, which
+  // is useless while pointer-locked and would yank focus off the page.
+  if (e.code === 'Tab' && isLocked) {
+    e.preventDefault();
+    document.getElementById('btn-tactical').click();
+  }
   // Whisper hotkey — player-only, mirrors the button being hidden for the DM.
   if (e.code === 'KeyT' && isLocked && !isDM) {
     document.getElementById('btn-whisper').click();
@@ -1462,7 +1487,7 @@ function initScene() {
   scene.fog = new THREE.Fog(0x0b1220, 5, 15);
   scene.background = new THREE.Color(0x0b1220);
 
-  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 40);
+  camera = new THREE.PerspectiveCamera(fovDeg, window.innerWidth / window.innerHeight, 0.05, 40);
 
   // lights — warm, indirect, kept low so the small marble room never blows out
   ambientLight = new THREE.AmbientLight(0x151109, 0.6); scene.add(ambientLight);
@@ -3168,7 +3193,7 @@ function animate() {
   // the same `camera` for both means every raycast-based interaction
   // (token pickup/drop/drag) keeps working unchanged in either mode.
   if (tacticalView && battleMapMesh) {
-    camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+1.6, battleMapMesh.position.z);
+    camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+1.28, battleMapMesh.position.z); // 20% closer than the original 1.6m
     camera.rotation.set(-Math.PI/2, 0, 0, 'YXZ');
   } else if (introActive && !isLocked) {
     updateIntroCamera(_t);
@@ -3236,6 +3261,12 @@ function animate() {
   let nearDist=Infinity, nearName=null;
   for (const [uid,u] of Object.entries(users)) {
     if (!u.grp) continue;
+    // Avatars would otherwise stand right on top of the map/tokens from
+    // directly overhead, blocking exactly the thing tactical view exists to
+    // show clearly. Local avatar is already always invisible (first-person,
+    // no self-model) — this just re-asserts that alongside hiding everyone
+    // else's, rather than special-casing it out.
+    u.grp.visible = u.isLocal ? false : !tacticalView;
     if (u.targetX!==undefined) {
       u.grp.position.x+=(u.targetX-u.grp.position.x)*.18;
       u.grp.position.z+=(u.targetZ-u.grp.position.z)*.18;
@@ -3978,6 +4009,19 @@ document.getElementById('btn-vol').addEventListener('click',()=>{
   const panel=document.getElementById('vol-panel');
   if (panel.style.display==='block') { panel.style.display='none'; }
   else { renderVolPanel(); panel.style.display='block'; }
+});
+
+const fovSlider=document.getElementById('fov-slider'), fovVal=document.getElementById('fov-val');
+fovSlider.value=String(fovDeg); fovVal.textContent=fovDeg+'°';
+fovSlider.addEventListener('input',()=>{
+  fovDeg=Number(fovSlider.value);
+  fovVal.textContent=fovDeg+'°';
+  if(camera){ camera.fov=fovDeg; camera.updateProjectionMatrix(); }
+  try{ localStorage.setItem(FOV_KEY,String(fovDeg)); }catch(e){}
+});
+document.getElementById('btn-fov').addEventListener('click',()=>{
+  const panel=document.getElementById('fov-panel');
+  panel.style.display = panel.style.display==='block' ? 'none' : 'block';
 });
 
 // Player-only, so the DM never even sees the trigger to select a target —
