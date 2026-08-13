@@ -3396,6 +3396,13 @@ function withTimeout(promise, ms, label) {
 
 // Buffer for position messages that arrive before user-published
 const pendingPos = {};
+// Same idea, for names: a 'name' message can legitimately arrive before
+// this client has finished subscribing to that peer's media (users[uid]
+// doesn't exist yet) — without buffering it, that message was just silently
+// dropped with nothing to ever retry it, which is what still let some
+// people show up as 'User-<uid>' even after every client re-announces
+// itself on each new join.
+const pendingName = {};
 
 async function initAgora(appId, room, myName, asDM, token) {
   joinedAppId=appId; joinedRoom=room; joinedToken=token||null; // needed later if the DM starts sharing music
@@ -3450,8 +3457,15 @@ async function initAgora(appId, room, myName, asDM, token) {
       const py = pendingPos[uid]?.y ?? 0;
       const pyaw = pendingPos[uid]?.yaw ?? 0;
       grp.position.set(px,0,pz);
-      users[uid]={name:'User-'+uid,grp,vidMesh,whisperIcon,targetX:px,targetZ:pz,targetY:py,targetYaw:pyaw};
+      // Same idea as position — a name broadcast can arrive before this
+      // point, so pick up whatever's already buffered instead of starting
+      // at the uid fallback and waiting for a message that already came
+      // and went.
+      const pname = pendingName[uid];
+      users[uid]={name:pname?.name ?? ('User-'+uid), isDM:!!pname?.isDM,
+        grp,vidMesh,whisperIcon,targetX:px,targetZ:pz,targetY:py,targetYaw:pyaw};
       delete pendingPos[uid];
+      delete pendingName[uid];
       // Same latecomer gap as map/tokens/fog/ball below, but for names: this
       // client's own sendName() call only ever fired once, right after it
       // first joined, so anyone who joins later never received it and is
@@ -3622,9 +3636,15 @@ async function initAgora(appId, room, myName, asDM, token) {
       if(msg.type==='fireSurge'){
         triggerFireSurge();
       }
-      if(msg.type==='name'&&users[uid]){
-        users[uid].name=msg.name;
-        users[uid].isDM=!!msg.isDM; // needed so the whisper target list can exclude the DM
+      if(msg.type==='name'){
+        if(users[uid]){
+          users[uid].name=msg.name;
+          users[uid].isDM=!!msg.isDM; // needed so the whisper target list can exclude the DM
+        } else {
+          // This peer's media subscription hasn't finished yet — buffer it,
+          // same as pendingPos, instead of just dropping it on the floor.
+          pendingName[uid]={name:msg.name, isDM:!!msg.isDM};
+        }
       }
       if(msg.type==='whisper'){
         if(msg.active) applyWhisperState(uid, msg.to);
