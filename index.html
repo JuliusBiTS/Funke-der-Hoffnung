@@ -221,7 +221,7 @@ body.locked #crosshair{opacity:1}
 
 #gallery-panel{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;z-index:220;background:rgba(2,4,12,.88)}
 #gallery-close-hint{font-size:10px;letter-spacing:2px;color:rgba(224,184,76,.55);text-transform:uppercase;margin-bottom:16px}
-#gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;max-width:920px;padding:0 24px}
+#gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;width:min(1700px,94vw);max-height:82vh;overflow-y:auto;padding:4px 24px}
 .gal-tile{position:relative;background:#111;border:1px solid rgba(224,184,76,.3);cursor:pointer;transition:border-color .15s}
 .gal-tile:hover{border-color:var(--c)}
 .gal-tile.speaking{border-color:var(--g);box-shadow:0 0 16px rgba(62,207,110,.5)}
