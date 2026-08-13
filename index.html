@@ -1142,12 +1142,16 @@ const AMBIANCE = {
   // Tight fog range (short far distance) does most of the "cramped tunnel"
   // work; particles are slow, sparse drips (low speedMult+opacity), not
   // rain — storm's downpour would read as a second storm, not a dungeon.
+  // A faint green-blue mystical cast nudged into the cold steel-grey wash
+  // (ambient/cLight/mLight/fog all shifted a touch toward teal) — still
+  // reads as a cramped stone tunnel, just with a hint of something
+  // unnatural glowing in it, not a full color-theme change.
   dungeon: {
-    label:'Dungeon', fogColor:0x14171c, fogNear:2.2, fogFar:7,
+    label:'Dungeon', fogColor:0x121c1a, fogNear:2.2, fogFar:7,
     skyStop0:0x05070a, skyStop1:0x11151c, starVisibility:0,
-    ambientColor:0x0c0f13, ambientIntensity:0.4,
-    cColor:0x6f7a86, cIntensity:0.7, mColor:0x4a5560, mIntensity:0.4,
-    particleColor:0x9fc4d6, particleDir:-1, particleSpeedMult:0.35, particleOpacity:0.14,
+    ambientColor:0x0a1512, ambientIntensity:0.4,
+    cColor:0x6f9690, cIntensity:0.7, mColor:0x3f7a68, mIntensity:0.45,
+    particleColor:0x9fd0c8, particleDir:-1, particleSpeedMult:0.35, particleOpacity:0.14,
     emberSpeedMult:1, emberOpacityBoost:0,
     swayAmp:0, shakeAmp:0, lightning:false,
   },
