@@ -3452,10 +3452,13 @@ async function initAgora(appId, room, myName, asDM, token) {
       grp.position.set(px,0,pz);
       users[uid]={name:'User-'+uid,grp,vidMesh,whisperIcon,targetX:px,targetZ:pz,targetY:py,targetYaw:pyaw};
       delete pendingPos[uid];
-      // A player who joins after the DM already set a map/tokens never
-      // received those original broadcasts — Agora's data channel only
-      // reaches clients connected at send time, nothing is replayed for
-      // latecomers. Re-announcing on every new join covers that gap.
+      // Same latecomer gap as map/tokens/fog/ball below, but for names: this
+      // client's own sendName() call only ever fired once, right after it
+      // first joined, so anyone who joins later never received it and is
+      // stuck seeing 'User-<uid>' forever. Every client (not just the DM —
+      // nobody else knows this client's own name) re-announces itself
+      // whenever it notices someone new.
+      sendName(myName, asDM);
       if (isDM) {
         if (currentMapUrl) broadcastMap(currentMapUrl);
         Object.entries(tokens).forEach(([id,t])=>{
