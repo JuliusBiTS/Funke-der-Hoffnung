@@ -3973,7 +3973,12 @@ function renderRecentTokens() {
       }
       const id=Date.now()+'-'+Math.floor(Math.random()*1e6);
       const u=0.5+(Math.random()-0.5)*0.1, v=0.5+(Math.random()-0.5)*0.1;
-      addToken(id, t.url, u, v, t.category, t.size, true);
+      // Size follows whatever's currently selected in the size dropdown,
+      // not whatever it happened to be when this image was first uploaded
+      // — so reusing a recent token on a different map doesn't require
+      // re-uploading the same image just to get a different size.
+      const size=document.getElementById('token-size').value;
+      addToken(id, t.url, u, v, t.category, size, true);
     });
     el.appendChild(img);
   });
