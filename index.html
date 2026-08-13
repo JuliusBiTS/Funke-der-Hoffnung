@@ -3614,7 +3614,7 @@ function animate() {
   // the same `camera` for both means every raycast-based interaction
   // (token pickup/drop/drag) keeps working unchanged in either mode.
   if (tacticalView && battleMapMesh) {
-    camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+1.28, battleMapMesh.position.z); // 20% closer than the original 1.6m
+    camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+0.82, battleMapMesh.position.z); // two more 20% steps down from 1.28m (which was itself 20% down from the original 1.6m)
     camera.rotation.set(-Math.PI/2, 0, 0, 'YXZ');
   } else if (introActive && !isLocked) {
     updateIntroCamera(_t);
