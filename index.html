@@ -1312,6 +1312,15 @@ let audioCtx = null;
 let musicGain = null, musicUid = null; // ambient music's own isolation gain node
 let spatialMode = true; // per-listener preference: true = positional 3D audio, false = flat, same volume for everyone
 
+// Personal music volume — a second gain node chained after musicGain, so
+// this is purely a multiplier on top of the existing location-based
+// isolation (0 in the secret room, 0.85 otherwise) rather than fighting
+// over the same value. Local-only, never broadcast, persisted like FOV.
+const MUSIC_VOLUME_KEY = 'fantasyRoomMusicVolume';
+let musicVolume = parseFloat(localStorage.getItem(MUSIC_VOLUME_KEY));
+if (isNaN(musicVolume)) musicVolume = 1;
+let musicVolumeGain = null;
+
 // ══════════ POINTER LOCK ══════════
 const canvas = document.getElementById('c');
 
@@ -2935,9 +2944,13 @@ function wireAmbient(track) {
     const src = audioCtx.createMediaStreamSource(new MediaStream([track.getMediaStreamTrack()]));
     const gain = audioCtx.createGain();
     gain.gain.value = isInSecretWing(playerPos.x,playerPos.z) ? 0 : 0.85;
+    const volGain = audioCtx.createGain();
+    volGain.gain.value = musicVolume;
     src.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(volGain);
+    volGain.connect(audioCtx.destination);
     musicGain = gain;
+    musicVolumeGain = volGain;
   } catch(e) {
     console.warn('Ambient audio fallback:', e);
     track.play();
@@ -3621,6 +3634,7 @@ async function initAgora(appId, room, myName, asDM, token) {
     delete pendingPos[ru.uid];
     if(ru.uid===musicUid){
       if(musicGain){ try{musicGain.disconnect();}catch(_){} musicGain=null; }
+      if(musicVolumeGain){ try{musicVolumeGain.disconnect();}catch(_){} musicVolumeGain=null; }
       musicUid=null;
     }
     if(document.getElementById('vol-panel').style.display==='block') renderVolPanel();
@@ -4000,9 +4014,39 @@ document.getElementById('btn-tactical').addEventListener('click',()=>{
 
 function renderVolPanel() {
   const list = document.getElementById('vol-list');
-  const entries = Object.entries(users).filter(([,u])=>!u.isLocal);
-  if (!entries.length) { list.innerHTML = '<div class="vol-empty">Niemand sonst im Raum</div>'; return; }
   list.innerHTML = '';
+
+  // Personal music volume — always shown here regardless of who else is in
+  // the room, since it has nothing to do with other players. Multiplies on
+  // top of the existing location-based gate (musicGain), doesn't replace it.
+  const musicRow = document.createElement('div');
+  musicRow.className = 'vol-row';
+  const musicLabel = document.createElement('div');
+  musicLabel.className = 'vol-label';
+  const musicPct = Math.round(musicVolume * 100);
+  const musicNameSpan = document.createElement('span');
+  musicNameSpan.textContent = '🎵 Musik';
+  const musicPctSpan = document.createElement('span');
+  musicPctSpan.textContent = musicPct + '%';
+  musicLabel.appendChild(musicNameSpan); musicLabel.appendChild(musicPctSpan);
+  const musicSlider = document.createElement('input');
+  musicSlider.type='range'; musicSlider.min='0'; musicSlider.max='200'; musicSlider.value=String(musicPct);
+  musicSlider.addEventListener('input', ()=>{
+    musicVolume = musicSlider.value/100;
+    musicPctSpan.textContent = musicSlider.value + '%';
+    if (musicVolumeGain) musicVolumeGain.gain.value = musicVolume;
+    try{ localStorage.setItem(MUSIC_VOLUME_KEY, String(musicVolume)); }catch(e){}
+  });
+  musicRow.appendChild(musicLabel); musicRow.appendChild(musicSlider);
+  list.appendChild(musicRow);
+
+  const entries = Object.entries(users).filter(([,u])=>!u.isLocal);
+  if (!entries.length) {
+    const empty=document.createElement('div');
+    empty.className='vol-empty'; empty.textContent='Niemand sonst im Raum';
+    list.appendChild(empty);
+    return;
+  }
   entries.forEach(([uid,u])=>{
     const pct = Math.round((u.volume ?? 1) * 100);
     const row = document.createElement('div');
