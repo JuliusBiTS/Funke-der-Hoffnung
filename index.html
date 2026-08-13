@@ -200,6 +200,11 @@ body.locked #crosshair{opacity:1}
 #fire-prompt{position:fixed;bottom:104px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:2px;color:rgba(224,184,76,.85);z-index:200;pointer-events:none;text-transform:uppercase;opacity:0;transition:opacity .25s;white-space:nowrap;display:flex;align-items:center;gap:10px}
 #fire-prompt.show{opacity:1}
 
+/* JUMP ROOM PROMPT + TIMER */
+#jr-prompt{position:fixed;bottom:104px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:2px;color:rgba(58,160,196,.9);z-index:200;pointer-events:none;text-transform:uppercase;opacity:0;transition:opacity .25s;white-space:nowrap;display:flex;align-items:center;gap:10px}
+#jr-prompt.show{opacity:1}
+#jr-timer{position:fixed;top:64px;left:50%;transform:translateX(-50%);font-family:var(--fd);font-size:13px;letter-spacing:2px;color:var(--m);text-shadow:0 0 10px rgba(58,160,196,.6);z-index:200;pointer-events:none;background:rgba(2,4,12,.7);padding:6px 16px;border:1px solid rgba(58,160,196,.3);display:none}
+
 /* FOCUS VIEW */
 #focus-overlay{position:fixed;left:24px;bottom:110px;width:340px;background:#000;border:1px solid rgba(224,184,76,.4);box-shadow:0 8px 30px rgba(0,0,0,.6);z-index:210;pointer-events:none}
 #focus-video{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#111}
@@ -441,6 +446,8 @@ canvas{display:block}
 <div id="ball-prompt"></div>
 <div id="book-prompt"></div>
 <div id="fire-prompt"></div>
+<div id="jr-prompt"></div>
+<div id="jr-timer"></div>
 
 <div id="focus-overlay" style="display:none">
   <video id="focus-video" autoplay muted playsinline></video>
@@ -935,6 +942,66 @@ const SECRET_CORR_L = 4.8;  // secret-room corridor length — kept long so spat
 const SECRET_ROOM_W = 2.5;  // secret-room width
 const SECRET_ROOM_D = 2.5;  // secret-room depth
 
+// ══════════ JUMP ROOM ══════════
+// A hidden bhop/surf course, floating in open space far from the main
+// room (pure X/Z distance, no walls needed to separate them — nothing
+// else is ever placed out here). Discovered via a potted plant in the
+// main room; entering swaps movement over to real velocity-based physics
+// (accel/friction/air-strafe) instead of the main room's direct
+// position-add walk, which stays completely untouched.
+const JR_BASE_X = 0, JR_BASE_Z = -80; // world-space anchor everything below is offset from
+let inJumpRoom = false;
+let jrVel = new THREE.Vector3();
+let jrGrounded = false;
+let jrGroundY = 0;     // current standing surface height (world Y), valid only while jrGrounded
+let jrOnRamp = false;
+let jrCheckpointIdx = -1;
+let jrLastCheckpoint = null; // {x,y,z} — where a fall/respawn sends you back to
+let jrRunStart = null; // _t when the run began; null = no run in progress
+let jrLastElapsed = 0; // frozen at the moment of finishing, for display
+const JR_BEST_KEY = 'fantasyRoomJumpRoomBest';
+let jrBest = parseFloat(localStorage.getItem(JR_BEST_KEY)) || null;
+
+const JR_GRAVITY = -16;
+const JR_JUMP_VEL = 6.5;
+const JR_GROUND_ACCEL = 10;
+const JR_AIR_ACCEL = 2;       // deliberately low — this is what makes air-strafing to gain extra speed actually matter
+const JR_MAX_GROUND_SPEED = 5.5;
+const JR_MAX_AIR_WISH_SPEED = 1.3; // per-frame air wishspeed cap, not a hard speed limit — you can still exceed this via repeated strafes
+const JR_FRICTION = 6;
+const JR_RAMP_FRICTION = 1.2; // much lower than ground friction — surfaces should let speed build, not eat it
+const JR_RAMP_ACCEL = 9;      // extra push down-slope while surfing, on top of normal accelerate()
+const JR_FALL_Y = -3;         // below every platform in the course — falling past this respawns at the last checkpoint
+
+// Platforms: simple axis-aligned rectangles, {x,z,hw,hd,y} — y is the top
+// surface height. Deliberately not a general physics/collision system,
+// just enough shapes for a real bhop course.
+const jrPlatforms = [
+  {x:JR_BASE_X,      z:JR_BASE_Z,      hw:3.0, hd:3.0, y:0},    // start
+  {x:JR_BASE_X,      z:JR_BASE_Z-6,    hw:1.3, hd:1.3, y:0.4},
+  {x:JR_BASE_X+1.8,  z:JR_BASE_Z-11,   hw:1.1, hd:1.1, y:0.9},
+  {x:JR_BASE_X-1.8,  z:JR_BASE_Z-16,   hw:1.0, hd:1.0, y:1.5},
+  {x:JR_BASE_X,      z:JR_BASE_Z-21,   hw:1.6, hd:1.6, y:1.5},  // pre-ramp landing
+  {x:JR_BASE_X,      z:JR_BASE_Z-38,   hw:2.5, hd:2.5, y:0},    // post-ramp runway
+  {x:JR_BASE_X+3,    z:JR_BASE_Z-43,   hw:1.0, hd:1.0, y:0.6},
+  {x:JR_BASE_X-3,    z:JR_BASE_Z-47,   hw:1.0, hd:1.0, y:1.1},
+  {x:JR_BASE_X,      z:JR_BASE_Z-52,   hw:1.3, hd:1.3, y:0.6},
+  {x:JR_BASE_X,      z:JR_BASE_Z-58,   hw:3.5, hd:3.5, y:0},    // finish
+];
+// Ramps slope purely along Z (no X tilt) — a deliberate scope cut so the
+// slope math stays a single lerp instead of a general inclined-plane
+// projection; still reads as "surfing" while sliding down/along it.
+const jrRamps = [
+  {x:JR_BASE_X, z0:JR_BASE_Z-21, z1:JR_BASE_Z-33, hw:2.2, y0:1.5, y1:0},
+];
+const jrCheckpoints = [
+  {x:JR_BASE_X,      z:JR_BASE_Z-6,  y:0.4},
+  {x:JR_BASE_X-1.8,  z:JR_BASE_Z-16, y:1.5},
+  {x:JR_BASE_X,      z:JR_BASE_Z-38, y:0},
+  {x:JR_BASE_X,      z:JR_BASE_Z-58, y:0}, // finish
+];
+const JR_CHECKPOINT_R = 1.6;
+
 // ══════════ PALETTE ══════════
 const GOLD   = 0xe0b84c; // gilt trim, primary accent
 const TEAL   = 0x3aa0c4; // astral blue, DM accent
@@ -1342,9 +1409,14 @@ document.addEventListener('mousemove', e => {
 
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (e.code === 'Space' && isLocked && playerPos.y <= EYE_H + 0.05) {
-    velY = isDM ? DM_JUMP_FORCE : JUMP_FORCE;
-    e.preventDefault();
+  if (e.code === 'Space' && isLocked) {
+    if (inJumpRoom) {
+      if (jrGrounded) jrVel.y = JR_JUMP_VEL; // preserves horizontal momentum — no bhop without that
+      e.preventDefault();
+    } else if (playerPos.y <= EYE_H + 0.05) {
+      velY = isDM ? DM_JUMP_FORCE : JUMP_FORCE;
+      e.preventDefault();
+    }
   }
   // Token pickup/drop/remove. The DM can move any token; a player can only
   // move "player"-category tokens (their own character), not ally/enemy
@@ -1477,6 +1549,17 @@ document.addEventListener('keydown', e => {
       && camera.position.distanceTo(hearthLight.position) < FIRE_INTERACT_RANGE) {
     triggerFireSurge();
     broadcastToken({type:'fireSurge'}, false);
+  }
+  // Hidden jump-room entrance — the potted plant is the "somehow interact
+  // with it" trigger the room asked for. Purely local: nothing about this
+  // needs to be seen by, or synced to, anyone else.
+  if (e.code === 'KeyH' && isLocked) {
+    if (!inJumpRoom && jrPlantPos && camera.position.distanceTo(jrPlantPos) < JR_PLANT_RANGE) {
+      enterJumpRoom();
+    } else if (inJumpRoom && jrReturnPortals.some(p=>
+        camera.position.distanceTo(new THREE.Vector3(p.x,p.y+EYE_H,p.z)) < JR_PORTAL_RANGE)) {
+      exitJumpRoom();
+    }
   }
 });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
@@ -2049,6 +2132,8 @@ function buildFurniture() {
   floatingLantern(-1.2, 2.4, -1.9);
   buildSecretWing();
   buildBall();
+  buildSecretPlant();
+  buildJumpRoom();
 }
 
 const BALL_COLOR = 0xe8578f; // pink — deliberately a clear pop of color against the room's gold/teal palette, reads as "this one's a toy"
@@ -2595,6 +2680,295 @@ function buildSecretRoom(wing, corrL, corrW) {
   const rune=new THREE.Mesh(new THREE.CircleGeometry(1.0,40),
     new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(rc),transparent:true}));
   rune.rotation.x=-Math.PI/2; rune.position.set(0,0.006,cz); wing.add(rune);
+}
+
+// ══════════ JUMP ROOM — geometry, portals, physics, checkpoints ══════════
+
+const jrReturnPortals = []; // {x,y,z} — proximity+H teleports back to the main room
+let jrPlantPos = null;
+const JR_PLANT_RANGE = 1.7;
+const JR_PORTAL_RANGE = 1.4;
+const MAIN_ROOM_SPAWN = new THREE.Vector3(0, EYE_H, 3.2); // matches playerPos's own initial value
+
+function playPortalSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+  osc.type='sine';
+  osc.frequency.setValueAtTime(220,t);
+  osc.frequency.exponentialRampToValueAtTime(880,t+0.35);
+  gain.gain.setValueAtTime(0.0001,t);
+  gain.gain.exponentialRampToValueAtTime(0.16,t+0.08);
+  gain.gain.exponentialRampToValueAtTime(0.0001,t+0.4);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+0.42);
+}
+function playChimeSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+  osc.type='sine'; osc.frequency.setValueAtTime(1046,t);
+  gain.gain.setValueAtTime(0.0001,t);
+  gain.gain.exponentialRampToValueAtTime(0.14,t+0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001,t+0.3);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+0.32);
+}
+function playFanfareSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  [523,659,784,1046].forEach((f,i)=>{
+    const osc=audioCtx.createOscillator(), gain=audioCtx.createGain();
+    osc.type='triangle'; osc.frequency.setValueAtTime(f,t+i*0.09);
+    gain.gain.setValueAtTime(0.0001,t+i*0.09);
+    gain.gain.exponentialRampToValueAtTime(0.16,t+i*0.09+0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001,t+i*0.09+0.35);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t+i*0.09); osc.stop(t+i*0.09+0.36);
+  });
+}
+
+// A glowing archway — used both for the two jump-room return portals and
+// could be reused anywhere else a "magic doorway" reads well. Torus'
+// default orientation already faces +/-Z, matching this course's
+// walk-along-Z layout with no extra rotation needed.
+function buildPortalVisual(x, y, z, color) {
+  const grp = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.75,0.06,12,32), mat(color,color,2.0));
+  ring.position.set(0,0.85,0); grp.add(ring);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.7,32),
+    new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.25,side:THREE.DoubleSide}));
+  disc.position.copy(ring.position); grp.add(disc);
+  const light = new THREE.PointLight(color,1.0,5);
+  light.position.copy(ring.position); grp.add(light);
+  addFlicker(light, 1.0);
+  grp.position.set(x,y,z);
+  scene.add(grp);
+  return grp;
+}
+
+function buildJrPlatform(p) {
+  const box = new THREE.Mesh(new THREE.BoxGeometry(p.hw*2,0.3,p.hd*2), mat(0x1c1830,0,0,0.55,0.15));
+  box.position.set(p.x,p.y-0.15,p.z);
+  box.receiveShadow = true;
+  scene.add(box);
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(p.hw*2+0.04,0.045,p.hd*2+0.04), mat(TEAL,TEAL,1.7,0));
+  rim.position.set(p.x,p.y+0.005,p.z);
+  scene.add(rim);
+}
+
+// Aligned via quaternion.setFromUnitVectors, same technique ribBetween()
+// already uses elsewhere in this file for arbitrary-direction geometry —
+// reusing a proven pattern rather than re-deriving rotation math fresh.
+function buildJrRamp(r) {
+  const p1 = new THREE.Vector3(r.x,r.y0,r.z0), p2 = new THREE.Vector3(r.x,r.y1,r.z1);
+  const dir = new THREE.Vector3().subVectors(p2,p1);
+  const len = dir.length();
+  const ramp = new THREE.Mesh(new THREE.BoxGeometry(r.hw*2,len,0.3), mat(0x241c38,0,0,0.4,0.2));
+  ramp.position.copy(p1).addScaledVector(dir,0.5);
+  ramp.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+  ramp.receiveShadow = true;
+  scene.add(ramp);
+  // Glowing edge strips along both long sides, purely for visibility/style
+  // — the slope has no X tilt (see jrRamps' own scoping note), so a plain
+  // world-X offset from the ramp's own center is already edge-aligned.
+  [-1,1].forEach(side=>{
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.05,len,0.32), mat(GOLD,GOLD,1.8,0));
+    edge.position.copy(p1).addScaledVector(dir,0.5);
+    edge.position.x += side*r.hw;
+    edge.quaternion.copy(ramp.quaternion);
+    scene.add(edge);
+  });
+}
+
+function buildJrCheckpointMarker(cp, isFinish) {
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9,0.05,10,28), mat(isFinish?GOLD:TEAL,isFinish?GOLD:TEAL,1.8,0));
+  ring.rotation.x = Math.PI/2;
+  ring.position.set(cp.x,cp.y+1.3,cp.z);
+  scene.add(ring);
+}
+
+function buildJumpRoom() {
+  jrPlatforms.forEach(p=>buildJrPlatform(p));
+  jrRamps.forEach(r=>buildJrRamp(r));
+  jrCheckpoints.forEach((cp,i)=>buildJrCheckpointMarker(cp, i===jrCheckpoints.length-1));
+
+  const start = jrPlatforms[0], finish = jrPlatforms[jrPlatforms.length-1];
+  const startPortalPos = {x:start.x, y:start.y, z:start.z+1.6};
+  const finishPortalPos = {x:finish.x, y:finish.y, z:finish.z-1.6};
+  buildPortalVisual(startPortalPos.x, startPortalPos.y, startPortalPos.z, TEAL);
+  buildPortalVisual(finishPortalPos.x, finishPortalPos.y, finishPortalPos.z, TEAL);
+  jrReturnPortals.push(startPortalPos, finishPortalPos);
+
+  // a few drifting glow-orbs along the course so the void between
+  // platforms doesn't read as completely empty
+  floatingLantern(JR_BASE_X+1.5, 1.8, JR_BASE_Z-9);
+  floatingLantern(JR_BASE_X-1.5, 2.1, JR_BASE_Z-18);
+  floatingLantern(JR_BASE_X+2.2, 1.6, JR_BASE_Z-27);
+  floatingLantern(JR_BASE_X-2.2, 1.3, JR_BASE_Z-45);
+  floatingLantern(JR_BASE_X+1.5, 1.7, JR_BASE_Z-55);
+}
+
+// Highest valid platform/ramp surface under a given (x,z), or null over a
+// gap. Small fixed arrays, called once per frame only while inJumpRoom —
+// a linear scan is plenty cheap here, no spatial index needed.
+function jrSurfaceAt(x, z) {
+  let best = null;
+  for (const p of jrPlatforms) {
+    if (x>=p.x-p.hw && x<=p.x+p.hw && z>=p.z-p.hd && z<=p.z+p.hd) {
+      if (!best || p.y>best.y) best = {y:p.y, ramp:false};
+    }
+  }
+  for (const r of jrRamps) {
+    if (Math.abs(x-r.x) > r.hw) continue;
+    const zHi=Math.max(r.z0,r.z1), zLo=Math.min(r.z0,r.z1);
+    if (z<zLo || z>zHi) continue;
+    const t = (r.z0-z)/(r.z0-r.z1);
+    const y = r.y0 + (r.y1-r.y0)*t;
+    if (!best || y>best.y) best = {y, ramp:true};
+  }
+  return best;
+}
+
+// Quake/Source-style air-strafe acceleration — the actual bhop mechanic.
+// Capping wishSpeed low in the air (see JR_MAX_AIR_WISH_SPEED) while still
+// running this same formula is what lets turning-while-strafing add real
+// speed beyond the ground max, instead of just being a slower version of
+// ground movement.
+function jrAccelerate(wishDir, wishSpeed, accel, dt) {
+  const currentSpeed = jrVel.x*wishDir.x + jrVel.z*wishDir.z;
+  const addSpeed = wishSpeed-currentSpeed;
+  if (addSpeed<=0) return;
+  let accelSpeed = accel*wishSpeed*dt;
+  if (accelSpeed>addSpeed) accelSpeed=addSpeed;
+  jrVel.x += accelSpeed*wishDir.x;
+  jrVel.z += accelSpeed*wishDir.z;
+}
+
+function jrUpdateCheckpoints() {
+  if (jrCheckpointIdx+1 >= jrCheckpoints.length) return;
+  const next = jrCheckpoints[jrCheckpointIdx+1];
+  const ny = next.y+EYE_H;
+  const d = Math.hypot(playerPos.x-next.x, playerPos.y-ny, playerPos.z-next.z);
+  if (d < JR_CHECKPOINT_R) {
+    jrCheckpointIdx++;
+    jrLastCheckpoint = {x:next.x, y:ny, z:next.z};
+    if (jrCheckpointIdx === jrCheckpoints.length-1) {
+      if (jrRunStart!==null) jrLastElapsed = _t-jrRunStart;
+      jrRunStart = null;
+      if (jrBest===null || jrLastElapsed<jrBest) {
+        jrBest = jrLastElapsed;
+        try{ localStorage.setItem(JR_BEST_KEY, String(jrBest)); }catch(e){}
+      }
+      playFanfareSound();
+    } else {
+      playChimeSound();
+    }
+  }
+}
+
+function updateJumpRoomMovement(dt) {
+  const fw=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const rt=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
+  const wish=new THREE.Vector3();
+  if(keys['KeyW']||keys['ArrowUp'])    wish.add(fw);
+  if(keys['KeyS']||keys['ArrowDown'])  wish.sub(fw);
+  if(keys['KeyA']||keys['ArrowLeft'])  wish.sub(rt);
+  if(keys['KeyD']||keys['ArrowRight']) wish.add(rt);
+  if (wish.lengthSq()>0) wish.normalize();
+
+  const surf = jrSurfaceAt(playerPos.x, playerPos.z);
+  const standingY = surf ? surf.y+EYE_H : null;
+  // Must be genuinely NEAR the surface, not just at-or-below it — "below"
+  // alone would incorrectly snap someone falling from well above (or
+  // already well below, e.g. mid-respawn) straight onto a platform's
+  // underside the instant its footprint contains their XZ.
+  jrGrounded = !!(surf && Math.abs(playerPos.y-standingY)<=0.15 && jrVel.y<=0.01);
+  jrOnRamp = !!(jrGrounded && surf.ramp);
+
+  if (jrGrounded) {
+    jrGroundY = standingY;
+    const friction = jrOnRamp ? JR_RAMP_FRICTION : JR_FRICTION;
+    const speed = Math.hypot(jrVel.x,jrVel.z);
+    if (speed>0.001) {
+      const drop = speed*friction*dt;
+      const newSpeed = Math.max(speed-drop,0);
+      jrVel.x *= newSpeed/speed; jrVel.z *= newSpeed/speed;
+    }
+    jrAccelerate(wish, JR_MAX_GROUND_SPEED, JR_GROUND_ACCEL, dt);
+    if (jrOnRamp) {
+      const r = jrRamps.find(rr=>{
+        if (Math.abs(playerPos.x-rr.x)>rr.hw) return false;
+        const zHi=Math.max(rr.z0,rr.z1), zLo=Math.min(rr.z0,rr.z1);
+        return playerPos.z<=zHi && playerPos.z>=zLo;
+      });
+      if (r) jrVel.z += (Math.sign(r.z1-r.z0)||-1)*JR_RAMP_ACCEL*dt;
+    }
+    playerPos.y = standingY;
+    jrVel.y = 0;
+  } else {
+    jrAccelerate(wish, Math.min(JR_MAX_AIR_WISH_SPEED,JR_MAX_GROUND_SPEED), JR_AIR_ACCEL, dt);
+    jrVel.y += JR_GRAVITY*dt;
+  }
+
+  playerPos.x += jrVel.x*dt;
+  playerPos.z += jrVel.z*dt;
+  if (!jrGrounded) playerPos.y += jrVel.y*dt;
+
+  if (playerPos.y < JR_FALL_Y) {
+    playerPos.set(jrLastCheckpoint.x, jrLastCheckpoint.y, jrLastCheckpoint.z);
+    jrVel.set(0,0,0);
+  }
+
+  jrUpdateCheckpoints();
+}
+
+function enterJumpRoom() {
+  inJumpRoom = true;
+  jrVel.set(0,0,0);
+  velY = 0;
+  const start = jrPlatforms[0];
+  playerPos.set(start.x, start.y+EYE_H, start.z);
+  jrLastCheckpoint = {x:playerPos.x, y:playerPos.y, z:playerPos.z};
+  jrCheckpointIdx = -1;
+  jrRunStart = _t;
+  jrLastElapsed = 0;
+  playPortalSound();
+}
+function exitJumpRoom() {
+  inJumpRoom = false;
+  jrVel.set(0,0,0);
+  velY = 0;
+  playerPos.copy(MAIN_ROOM_SPAWN);
+  jrRunStart = null;
+  playPortalSound();
+}
+
+// The potted plant — a modest, unassuming decoration in an otherwise
+// unclaimed corner (SW chamfer, below the Ranz portrait; every other
+// wall/corner in the octagon is already claimed by an existing feature).
+// Proximity+H, same idiom as the fireplace easter egg.
+function buildSecretPlant() {
+  const x=-2.6, z=2.6;
+  jrPlantPos = new THREE.Vector3(x, EYE_H, z);
+  const grp = new THREE.Group();
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.16,0.34,16), mat(0x6b4a2e,0,0,0.75,0.05));
+  pot.position.y=0.17; pot.castShadow=true; grp.add(pot);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.22,0.025,8,20), mat(GOLD,GOLD,0.8,0));
+  rim.rotation.x=Math.PI/2; rim.position.y=0.34; grp.add(rim);
+  const leafMat = mat(0x2f6b3a,0,0,0.7,0);
+  for(let i=0;i<7;i++){
+    const a=(i/7)*Math.PI*2;
+    const leaf=new THREE.Mesh(new THREE.ConeGeometry(0.11,0.55,6), leafMat);
+    leaf.position.set(Math.cos(a)*0.1, 0.34+0.28, Math.sin(a)*0.1);
+    leaf.rotation.z=Math.cos(a)*0.35; leaf.rotation.x=Math.sin(a)*0.35;
+    grp.add(leaf);
+  }
+  const glow = new THREE.PointLight(0x6fd88a,0.35,2.2);
+  glow.position.set(0,0.5,0); grp.add(glow);
+  addFlicker(glow, 0.35);
+  grp.position.set(x,0,z);
+  scene.add(grp);
 }
 
 function floatingLantern(x,y,z) {
@@ -3156,7 +3530,11 @@ function animate() {
   // movement — clamped to the chamfered-octagon footprint. Frozen in place
   // while the tactical view is active — it's a fixed bird's-eye shot of
   // the table, not a flycam.
-  if (isLocked && !tacticalView) {
+  if (isLocked && !tacticalView && inJumpRoom) {
+    // Real velocity-based bhop/surf physics — entirely separate from the
+    // main room's direct position-add walk below, which this never touches.
+    updateJumpRoomMovement(dt);
+  } else if (isLocked && !tacticalView) {
     const spd=MOVE_SPEED*dt;
     const fw =new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
     const rt =new THREE.Vector3( Math.cos(yaw),0,-Math.sin(yaw));
@@ -3340,6 +3718,28 @@ function animate() {
     firePromptEl.classList.add('show');
   } else {
     firePromptEl.classList.remove('show');
+  }
+
+  // Jump-room prompt (plant to enter / portal to leave) + the run timer.
+  const jrPromptEl=document.getElementById('jr-prompt');
+  if (!inJumpRoom && jrPlantPos && camera.position.distanceTo(jrPlantPos) < JR_PLANT_RANGE) {
+    jrPromptEl.innerHTML='<span class="bp-key">H</span> Erforschen';
+    jrPromptEl.classList.add('show');
+  } else if (inJumpRoom && jrReturnPortals.some(p=>
+      camera.position.distanceTo(new THREE.Vector3(p.x,p.y+EYE_H,p.z)) < JR_PORTAL_RANGE)) {
+    jrPromptEl.innerHTML='<span class="bp-key">H</span> Zurückkehren';
+    jrPromptEl.classList.add('show');
+  } else {
+    jrPromptEl.classList.remove('show');
+  }
+  const jrTimerEl=document.getElementById('jr-timer');
+  if (inJumpRoom) {
+    const elapsed = jrRunStart!==null ? (_t-jrRunStart) : jrLastElapsed;
+    jrTimerEl.textContent = '⏱ ' + elapsed.toFixed(2) + 's'
+      + (jrBest!==null ? '  ·  Bestzeit: ' + jrBest.toFixed(2) + 's' : '');
+    jrTimerEl.style.display='block';
+  } else {
+    jrTimerEl.style.display='none';
   }
 
   // ambiance — crossfades fog/lights/sky/particle color+opacity toward
