@@ -409,6 +409,10 @@ canvas{display:block}
     <button class="pb" id="map-upload-btn">🗺 Karte hochladen</button>
     <button class="pb" id="map-clear-btn" style="display:none">✕ Karte entfernen</button>
     <div class="mstat" id="map-stat">Keine Karte aktiv</div>
+    <div class="gstt" style="margin-top:10px">Nebel des Krieges</div>
+    <button class="pb" id="fog-reveal-all-btn">👁 Alles aufdecken</button>
+    <button class="pb" id="fog-cover-all-btn">🌫 Alles verdunkeln</button>
+    <div class="mstat">Taste <span class="bp-key">C</span> halten + auf die Karte schauen zum Aufdecken</div>
   </div>
   <div class="gm-sec">
     <div class="gstt-row">
@@ -1170,6 +1174,22 @@ let nextShootingStarAt = null;
 const CLOUDINARY_CLOUD = 'su0cgmgw';
 const CLOUDINARY_PRESET = 'fantasy-room';
 let battleMapMesh = null, defaultMapTexture = null, currentMapUrl = null;
+
+// ══════════ FOG OF WAR ══════════
+// A canvas-texture overlay, child of battleMapMesh so it automatically
+// inherits its position/rotation AND its per-image aspect-fit scale — no
+// separate transform bookkeeping needed. DM paints it away by holding C
+// while looking at the map (same crosshair-raycast idiom as everything
+// else in this game — token pickup, books, the fireplace); every dab
+// broadcasts (throttled) and replays identically on each client, and
+// resets automatically the instant a new map loads, before the new image
+// is even visible, so players never see an unfogged frame.
+let fogCanvas, fogCtx, fogTexture, fogMesh;
+const fogReveals = []; // {u,v,r} history — replayed for late-joiners, mirrors exactly what was broadcast
+let fogFullyRevealed = false;
+const FOG_BRUSH_RADIUS = 0.09; // UV units — roughly "one room" per dab
+const FOG_BROADCAST_MS = 90;   // network throttle; local painting itself is never throttled
+let lastFogBroadcastAt = 0;
 
 // ══════════ TOKENS ══════════
 const TOKEN_RADIUS = 0.055;
@@ -2064,6 +2084,7 @@ function buildTable() {
   // a flat plane placed inside the opaque top box is fully occluded by
   // that box's own top face and can never be seen, texture or not.
   battleMapMesh.rotation.x=-Math.PI/2; battleMapMesh.position.set(0,TY+0.05,0); scene.add(battleMapMesh);
+  buildFog(TL*0.72, TW*0.7);
   const mapRim=new THREE.Mesh(new THREE.PlaneGeometry(TL*0.72+0.03,TW*0.7+0.03),
     mat(GOLD,GOLD,1.0,0.4,0.1));
   mapRim.rotation.x=-Math.PI/2; mapRim.position.set(0,TY+0.048,0); scene.add(mapRim);
@@ -2117,6 +2138,71 @@ function buildTable() {
   });
 }
 
+// Builds the fog overlay as a child of battleMapMesh — inheriting its
+// transform and (crucially) its per-image aspect-fit scale for free, so the
+// fog plane always exactly covers the visible map regardless of that
+// image's aspect ratio. A mottled dark wash rather than flat black, so it
+// reads as ink/shadow instead of a flat UI mask.
+function buildFog(w, h) {
+  fogCanvas=document.createElement('canvas'); fogCanvas.width=512; fogCanvas.height=Math.round(512*h/w);
+  fogCtx=fogCanvas.getContext('2d');
+  paintFogBase();
+  fogTexture=new THREE.CanvasTexture(fogCanvas);
+  fogTexture.flipY=false; // draw directly in the same u,v the map raycast already returns — no separate flip to keep consistent
+  fogMesh=new THREE.Mesh(new THREE.PlaneGeometry(w,h),
+    new THREE.MeshBasicMaterial({map:fogTexture, transparent:true, depthWrite:false,
+      opacity: isDM ? 0.16 : 1.0})); // DM sees a faint haze (still reads tokens/map through it); players see it opaque
+  fogMesh.position.z = 0.01; // battleMapMesh's own local space — just above both the map surface and token discs
+  fogMesh.visible = false; // only shown once a real map is loaded, not the default grid
+  battleMapMesh.add(fogMesh);
+}
+function paintFogBase() {
+  const w=fogCanvas.width, h=fogCanvas.height;
+  fogCtx.clearRect(0,0,w,h);
+  fogCtx.fillStyle='#100c08';
+  fogCtx.fillRect(0,0,w,h);
+  for (let i=0;i<36;i++){
+    const x=Math.random()*w, y=Math.random()*h, r=w*(0.08+Math.random()*0.16);
+    const shade=6+Math.random()*8;
+    const g=fogCtx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, `rgba(${Math.round(shade+16)},${Math.round(shade+12)},${Math.round(shade+8)},0.4)`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    fogCtx.fillStyle=g; fogCtx.beginPath(); fogCtx.arc(x,y,r,0,Math.PI*2); fogCtx.fill();
+  }
+}
+// Local-only repaint back to fully covered — used both when a new map
+// auto-fogs (no broadcast needed, the 'map' message itself syncs everyone)
+// and by the DM's explicit "Alles verdunkeln" button (which does broadcast,
+// from its own click handler).
+function resetFog() {
+  fogReveals.length = 0;
+  fogFullyRevealed = false;
+  if (fogCtx) { paintFogBase(); fogTexture.needsUpdate=true; }
+}
+// Local-only full reveal — same asymmetry as resetFog(): the button that
+// triggers this broadcasts separately.
+function fogRevealAllLocal() {
+  fogReveals.length = 0;
+  fogFullyRevealed = true;
+  if (fogCtx) { fogCtx.clearRect(0,0,fogCanvas.width,fogCanvas.height); fogTexture.needsUpdate=true; }
+}
+// The actual paint op — soft-edged (feathered radial gradient, not a hard
+// circle) so a swept trail reads as torchlight fading into shadow rather
+// than a row of stamped coins.
+function fogRevealAt(u, v, r) {
+  if (!fogCtx) return;
+  const x=u*fogCanvas.width, y=v*fogCanvas.height;
+  const px=r*Math.min(fogCanvas.width,fogCanvas.height);
+  const g=fogCtx.createRadialGradient(x,y,0,x,y,px);
+  g.addColorStop(0,'rgba(0,0,0,1)'); g.addColorStop(0.7,'rgba(0,0,0,1)'); g.addColorStop(1,'rgba(0,0,0,0)');
+  fogCtx.save();
+  fogCtx.globalCompositeOperation='destination-out';
+  fogCtx.fillStyle=g;
+  fogCtx.beginPath(); fogCtx.arc(x,y,px,0,Math.PI*2); fogCtx.fill();
+  fogCtx.restore();
+  fogTexture.needsUpdate=true;
+}
+
 // Applies (or clears) the combat map on the table's recessed battlemap
 // surface. Called both locally (right after the DM's own upload, for
 // instant feedback) and from the network handler when someone else's map
@@ -2128,8 +2214,15 @@ function setBattleMap(url) {
     battleMapMesh.material.map = defaultMapTexture;
     battleMapMesh.material.needsUpdate = true;
     battleMapMesh.scale.set(1,1,1);
+    if (fogMesh) fogMesh.visible = false;
     return;
   }
+  // Reset fog to fully covered synchronously, before the new image has even
+  // finished loading — so there is never a frame where an unfogged new map
+  // is visible, on any client (this runs identically whether it's the DM's
+  // own upload or a received broadcast).
+  resetFog();
+  if (fogMesh) fogMesh.visible = true;
   new THREE.TextureLoader().load(url, tex => {
     // Fit the image inside the fixed recessed area without distorting it —
     // shrink along whichever axis the image is relatively narrower on.
@@ -3133,6 +3226,26 @@ function animate() {
     }
   }
 
+  // Fog of war — DM holds C while looking at the map, same crosshair idiom
+  // as everything else (token pickup, books, the fireplace). Local painting
+  // happens every frame for instant feedback; only the network broadcast is
+  // throttled, same reasoning as the token-drag block just above. Each dab
+  // is sent reliably (unlike position updates) since it's permanent state,
+  // not a value the next update supersedes.
+  if (isDM && isLocked && keys['KeyC'] && battleMapMesh && fogMesh && fogMesh.visible) {
+    tokenRaycaster.setFromCamera({x:0,y:0}, camera);
+    const hit = tokenRaycaster.intersectObject(battleMapMesh)[0];
+    if (hit) {
+      fogRevealAt(hit.uv.x, hit.uv.y, FOG_BRUSH_RADIUS);
+      const now = performance.now();
+      if (now - lastFogBroadcastAt > FOG_BROADCAST_MS) {
+        lastFogBroadcastAt = now;
+        fogReveals.push({u:hit.uv.x, v:hit.uv.y, r:FOG_BRUSH_RADIUS});
+        broadcastToken({type:'fogReveal', u:hit.uv.x, v:hit.uv.y, r:FOG_BRUSH_RADIUS}, true);
+      }
+    }
+  }
+
   // avatars
   let nearDist=Infinity, nearName=null;
   for (const [uid,u] of Object.entries(users)) {
@@ -3362,6 +3475,13 @@ async function initAgora(appId, room, myName, asDM, token) {
         Object.entries(tokens).forEach(([id,t])=>{
           broadcastToken({type:'tokenAdd', id, url:t.url, u:t.u, v:t.v, category:t.category, size:t.size}, true);
         });
+        // Same gap for fog: the 'map' re-announce above already resets the
+        // newcomer's fog to fully covered (setBattleMap does that locally
+        // on receipt) — replay whatever's been revealed since on top of it.
+        if (currentMapUrl) {
+          if (fogFullyRevealed) broadcastToken({type:'fogRevealAll'}, true);
+          else fogReveals.forEach(d=>broadcastToken({type:'fogReveal', u:d.u, v:d.v, r:d.r}, true));
+        }
         // Same gap for the ball — the DM is the one client guaranteed
         // present to anchor a re-announce, even though ball ownership
         // itself isn't DM-exclusive the rest of the time. Send whichever
@@ -3491,6 +3611,15 @@ async function initAgora(appId, room, myName, asDM, token) {
       }
       if(msg.type==='tokenRemove'){
         removeToken(msg.id, false);
+      }
+      if(msg.type==='fogReveal'){
+        fogRevealAt(msg.u, msg.v, msg.r);
+      }
+      if(msg.type==='fogRevealAll'){
+        fogRevealAllLocal();
+      }
+      if(msg.type==='fogCoverAll'){
+        resetFog();
       }
       if(msg.type==='shootingStar'){
         spawnShootingStar();
@@ -3973,12 +4102,13 @@ function renderRecentTokens() {
       }
       const id=Date.now()+'-'+Math.floor(Math.random()*1e6);
       const u=0.5+(Math.random()-0.5)*0.1, v=0.5+(Math.random()-0.5)*0.1;
-      // Size follows whatever's currently selected in the size dropdown,
-      // not whatever it happened to be when this image was first uploaded
-      // — so reusing a recent token on a different map doesn't require
-      // re-uploading the same image just to get a different size.
+      // Size and category both follow whatever's currently selected in
+      // their dropdowns, not whatever they happened to be when this image
+      // was first uploaded — so reusing a recent token doesn't require
+      // re-uploading the same image just to get a different size/side.
+      const category=document.getElementById('token-category').value;
       const size=document.getElementById('token-size').value;
-      addToken(id, t.url, u, v, t.category, size, true);
+      addToken(id, t.url, u, v, category, size, true);
     });
     el.appendChild(img);
   });
@@ -4011,6 +4141,15 @@ document.getElementById('map-clear-btn').addEventListener('click', async()=>{
   document.getElementById('map-stat').textContent='Keine Karte aktiv';
   document.getElementById('map-stat').className='mstat';
   document.getElementById('map-clear-btn').style.display='none';
+});
+
+document.getElementById('fog-reveal-all-btn').addEventListener('click', ()=>{
+  fogRevealAllLocal();
+  broadcastToken({type:'fogRevealAll'}, true);
+});
+document.getElementById('fog-cover-all-btn').addEventListener('click', ()=>{
+  resetFog();
+  broadcastToken({type:'fogCoverAll'}, true);
 });
 
 document.getElementById('map-recent-rm-toggle').addEventListener('click', ()=>{
