@@ -139,6 +139,12 @@ body.locked #crosshair{opacity:1}
 .vol-label{font-size:10px;letter-spacing:1px;color:rgba(224,184,76,.7);margin-bottom:4px;text-transform:uppercase;display:flex;justify-content:space-between}
 .vol-row input[type=range]{width:100%;accent-color:#e0b84c}
 .vol-empty{padding:14px;font-size:10px;color:rgba(224,184,76,.4);text-align:center}
+.gate-toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.gate-toggle-row label{font-size:10px;letter-spacing:1px;color:rgba(224,184,76,.7);text-transform:uppercase}
+.gate-meter{position:relative;height:6px;border-radius:3px;background:rgba(224,184,76,.12);margin-top:6px;overflow:hidden}
+.gate-meter-fill{position:absolute;left:0;top:0;bottom:0;width:0%;background:#3ecf6e;transition:width .08s linear,background .15s}
+.gate-meter-fill.gate-closed{background:rgba(224,184,76,.35)}
+.gate-meter-mark{position:absolute;top:-2px;bottom:-2px;width:2px;background:#d1495b}
 
 /* WHISPER PANEL — reuses .vol-head/.vol-empty, own row style since rows
    here are just a name to click, not a name + slider */
@@ -1489,6 +1495,7 @@ const BALL_REST_EPS = 0.05;      // speed below which it's considered stopped
 // only ever has one audio track — their mic — always spatial.
 const MUSIC_UID_OFFSET = 1000000;
 let agoraClient = null, musicClient = null, localAudio = null, localVideo = null, screenAudio = null;
+let gatedMicTrack = null; // the custom Agora track actually published for voice — see buildGatedMicTrack()
 let localUID = null, localName = '', isDM = false;
 let joinedAppId = null, joinedRoom = null, joinedToken = null;
 let micMuted = false, camOff = false, streaming = false;
@@ -4701,6 +4708,96 @@ function ensureACtx() {
   if (audioCtx.state==='suspended') audioCtx.resume();
 }
 
+// ══════════ MIC NOISE GATE ══════════
+// Two people sitting in the same physical room on separate devices means
+// each device's own AEC only cancels ITS OWN speaker output — it has no
+// way to know what a neighboring device's speaker is playing, so a faint
+// pickup of the other person's voice through the air gets re-transmitted,
+// which is what everyone else hears as an echo/double-voice. Better AEC
+// can't fix that (it's not an echo of anything this device itself played);
+// muting the mic whenever nobody's actually talking loud enough is the
+// practical fix. Adjustable per-client (like FOV/volume) since every
+// room's noise floor and mic sensitivity is different.
+const NOISE_GATE_KEY = 'fantasyRoomNoiseGate';
+let noiseGateEnabled = true;
+let noiseGateThresholdDb = -45; // dBFS-ish (RMS of a -1..1 signal) — the level below which the mic is gated shut
+try {
+  const savedGate = JSON.parse(localStorage.getItem(NOISE_GATE_KEY));
+  if (savedGate) {
+    if (typeof savedGate.enabled === 'boolean') noiseGateEnabled = savedGate.enabled;
+    if (typeof savedGate.threshold === 'number') noiseGateThresholdDb = savedGate.threshold;
+  }
+} catch(e){}
+function saveNoiseGateSettings() {
+  try{ localStorage.setItem(NOISE_GATE_KEY, JSON.stringify({enabled:noiseGateEnabled, threshold:noiseGateThresholdDb})); }catch(e){}
+}
+
+let gateAnalyser=null, gateGain=null;
+let gateMeterEls=null; // {fill,mark} refs into the currently-open volume panel, or null while it's closed — see renderVolPanel()
+let gateLevelDb=-100, gateOpen=false, gateHoldUntil=0;
+const GATE_ATTACK=0.01;    // seconds — opens fast so a word's onset isn't clipped
+const GATE_RELEASE=0.25;   // seconds — closes slowly so it fades instead of chopping
+const GATE_HOLD_MS=200;    // stays open this long past the last loud moment, so brief pauses mid-sentence don't chatter
+
+// Builds mic → analyser (for the level meter/threshold check) → gain (the
+// actual gate) → a fresh MediaStreamDestination, and returns that
+// destination's track — this is what actually gets published, in place of
+// the raw AEC/ANS/AGC-processed track Agora's own createMicrophoneAudioTrack
+// still captures (that processing runs first; the gate is purely
+// downstream of it, same idea as the tab-audio custom track already used
+// for music, just chained through a gain stage instead of published raw).
+function buildGatedMicTrack(rawMicTrack) {
+  ensureACtx();
+  const src = audioCtx.createMediaStreamSource(new MediaStream([rawMicTrack]));
+  gateAnalyser = audioCtx.createAnalyser();
+  gateAnalyser.fftSize = 512;
+  gateGain = audioCtx.createGain();
+  gateGain.gain.value = noiseGateEnabled ? 0 : 1; // starts closed if the gate's on — updateNoiseGate() opens it the instant it sees real level
+  const dest = audioCtx.createMediaStreamDestination();
+  src.connect(gateAnalyser);
+  src.connect(gateGain);
+  gateGain.connect(dest);
+  return dest.stream.getAudioTracks()[0];
+}
+
+// Reads the current mic level and opens/closes the gate — called every
+// frame from animate(), same idiom as the flicker-light/particle loops.
+// Also drives the live level meter in the volume panel while it's open.
+function updateNoiseGate() {
+  if (!gateAnalyser || !gateGain) return;
+  const buf = gateLevelBuf || (gateLevelBuf = new Uint8Array(gateAnalyser.fftSize));
+  gateAnalyser.getByteTimeDomainData(buf);
+  let sumSq = 0;
+  for (let i=0;i<buf.length;i++){ const v=(buf[i]-128)/128; sumSq += v*v; }
+  const rms = Math.sqrt(sumSq/buf.length);
+  gateLevelDb = rms>0 ? 20*Math.log10(rms) : -100;
+
+  if (!noiseGateEnabled) {
+    gateGain.gain.setTargetAtTime(1, audioCtx.currentTime, 0.05);
+    gateOpen = true;
+  } else {
+    const now = performance.now();
+    if (gateLevelDb > noiseGateThresholdDb) {
+      gateOpen = true;
+      gateHoldUntil = now + GATE_HOLD_MS;
+    } else if (now > gateHoldUntil) {
+      gateOpen = false;
+    }
+    gateGain.gain.setTargetAtTime(gateOpen?1:0, audioCtx.currentTime, gateOpen?GATE_ATTACK:GATE_RELEASE);
+  }
+
+  // Meter keeps reading live level regardless of noiseGateEnabled — useful
+  // to see where your voice sits relative to the threshold even with the
+  // gate switched off, e.g. while deciding where to set it.
+  if (gateMeterEls) {
+    const GATE_METER_MIN_DB=-70, GATE_METER_MAX_DB=0;
+    const pct = ((gateLevelDb-GATE_METER_MIN_DB)/(GATE_METER_MAX_DB-GATE_METER_MIN_DB))*100;
+    gateMeterEls.fill.style.width = Math.max(0,Math.min(100,pct))+'%';
+    gateMeterEls.fill.classList.toggle('gate-closed', !gateOpen);
+  }
+}
+let gateLevelBuf = null;
+
 // The secret wing (corridor + room) is walled off from the main room for
 // audio purposes, not just distance falloff — once past the doorway
 // threshold, treat it as a separate acoustic zone so occupants of one
@@ -5062,6 +5159,7 @@ function animate() {
   // listener
   updateListener();
   updateMusicIsolation();
+  updateNoiseGate();
 
   // held token follows the aim point across the map, throttled network
   // update so everyone sees it move live during a drag, not just on drop.
@@ -5700,7 +5798,19 @@ async function initAgora(appId, room, myName, asDM, token) {
       AgoraRTC.createMicrophoneAudioTrack({AEC:true,ANS:true,AGC:true}),
       12000, 'Mikrofon-Zugriff');
   }
-  await agoraClient.publish(localVideo ? [localAudio,localVideo] : [localAudio]);
+  // Publish a gated copy of the mic, not localAudio itself — localAudio is
+  // still what setEnabled()/mute controls (a disabled track's data becomes
+  // silence, which flows through the gate untouched, so mute keeps working
+  // exactly as before). See buildGatedMicTrack()/updateNoiseGate() above.
+  try {
+    const gatedTrack = buildGatedMicTrack(localAudio.getMediaStreamTrack());
+    gatedMicTrack = await AgoraRTC.createCustomAudioTrack({mediaStreamTrack: gatedTrack, encoderConfig:'speech_standard'});
+  } catch(e) {
+    console.warn('Noise-Gate-Aufbau fehlgeschlagen, sende Mikrofon ungegated:', e);
+    gatedMicTrack = null;
+  }
+  const audioToPublish = gatedMicTrack || localAudio;
+  await agoraClient.publish(localVideo ? [audioToPublish,localVideo] : [audioToPublish]);
 
   // local avatar
   const {grp,vidMesh,whisperIcon}=makeAvatar(asDM);
@@ -5986,6 +6096,69 @@ function renderVolPanel() {
   musicRow.appendChild(musicLabel); musicRow.appendChild(musicSlider);
   list.appendChild(musicRow);
 
+  // Personal mic noise gate — same reasoning as the music row above (own
+  // setting, nothing to do with other players, always shown). Mainly for
+  // two people sitting in the same physical room on separate devices: cuts
+  // the mic below the threshold so bleed from the other person's speaker
+  // doesn't get picked up and re-broadcast as an echo. See updateNoiseGate().
+  const gateRow = document.createElement('div');
+  gateRow.className = 'vol-row';
+  const gateToggleRow = document.createElement('div');
+  gateToggleRow.className = 'gate-toggle-row';
+  const gateLabel = document.createElement('label');
+  gateLabel.textContent = '🚪 Noise-Gate (gegen Echo im selben Raum)';
+  gateLabel.htmlFor = 'gate-enabled-cb';
+  const gateCheckbox = document.createElement('input');
+  gateCheckbox.type = 'checkbox'; gateCheckbox.id = 'gate-enabled-cb';
+  gateCheckbox.checked = noiseGateEnabled;
+  gateToggleRow.appendChild(gateLabel); gateToggleRow.appendChild(gateCheckbox);
+  gateRow.appendChild(gateToggleRow);
+
+  const gateThreshLabel = document.createElement('div');
+  gateThreshLabel.className = 'vol-label';
+  const gateThreshName = document.createElement('span');
+  gateThreshName.textContent = 'Empfindlichkeit';
+  const gateThreshVal = document.createElement('span');
+  gateThreshVal.textContent = Math.round(noiseGateThresholdDb) + ' dB';
+  gateThreshLabel.appendChild(gateThreshName); gateThreshLabel.appendChild(gateThreshVal);
+  gateRow.appendChild(gateThreshLabel);
+
+  const gateSlider = document.createElement('input');
+  gateSlider.type='range'; gateSlider.min='-70'; gateSlider.max='-20'; gateSlider.step='1';
+  gateSlider.value = String(Math.round(noiseGateThresholdDb));
+  gateRow.appendChild(gateSlider);
+
+  const gateMeter = document.createElement('div');
+  gateMeter.className = 'gate-meter';
+  const gateMeterFill = document.createElement('div');
+  gateMeterFill.className = 'gate-meter-fill';
+  const gateMeterMark = document.createElement('div');
+  gateMeterMark.className = 'gate-meter-mark';
+  gateMeter.appendChild(gateMeterFill); gateMeter.appendChild(gateMeterMark);
+  gateRow.appendChild(gateMeter);
+  list.appendChild(gateRow);
+
+  // Cache these for updateNoiseGate() to drive live, without re-rendering
+  // the whole panel every frame — cleared on close so a stale reference to
+  // a detached element (from #vol-list.innerHTML='' next render) never
+  // lingers.
+  gateMeterEls = {fill:gateMeterFill, mark:gateMeterMark};
+  const GATE_METER_MIN_DB=-70, GATE_METER_MAX_DB=0;
+  const markPct = ((noiseGateThresholdDb-GATE_METER_MIN_DB)/(GATE_METER_MAX_DB-GATE_METER_MIN_DB))*100;
+  gateMeterMark.style.left = Math.max(0,Math.min(100,markPct))+'%';
+
+  gateCheckbox.addEventListener('change', ()=>{
+    noiseGateEnabled = gateCheckbox.checked;
+    saveNoiseGateSettings();
+  });
+  gateSlider.addEventListener('input', ()=>{
+    noiseGateThresholdDb = Number(gateSlider.value);
+    gateThreshVal.textContent = Math.round(noiseGateThresholdDb) + ' dB';
+    const pct = ((noiseGateThresholdDb-GATE_METER_MIN_DB)/(GATE_METER_MAX_DB-GATE_METER_MIN_DB))*100;
+    gateMeterMark.style.left = Math.max(0,Math.min(100,pct))+'%';
+    saveNoiseGateSettings();
+  });
+
   const entries = Object.entries(users).filter(([,u])=>!u.isLocal);
   if (!entries.length) {
     const empty=document.createElement('div');
@@ -6016,7 +6189,7 @@ function renderVolPanel() {
 }
 document.getElementById('btn-vol').addEventListener('click',()=>{
   const panel=document.getElementById('vol-panel');
-  if (panel.style.display==='block') { panel.style.display='none'; }
+  if (panel.style.display==='block') { panel.style.display='none'; gateMeterEls=null; }
   else { renderVolPanel(); panel.style.display='block'; }
 });
 
@@ -6275,6 +6448,7 @@ document.getElementById('token-label-btn').addEventListener('click',()=>{
 
 document.getElementById('btn-leave').addEventListener('click',async()=>{
   try{
+    if(gatedMicTrack){gatedMicTrack.stop();gatedMicTrack.close();}
     if(localAudio){localAudio.stop();localAudio.close();}
     if(localVideo){localVideo.stop();localVideo.close();}
     if(screenAudio){screenAudio.stop();screenAudio.close();}
