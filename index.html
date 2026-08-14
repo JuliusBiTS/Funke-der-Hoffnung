@@ -1230,6 +1230,14 @@ let lightningLight, lightningFlashEl, nextLightningAt = null, lightningFlash = 0
 let skyMesh, skyCanvas, skyCtx;
 const starPointsLayers = []; // {points, baseOpacity} — so ambiance can fade the star field in/out
 const _ambColorA=new THREE.Color(), _ambColorB=new THREE.Color(); // scratch objects, reused every frame to avoid per-frame allocation
+// Same idea, for the movement/listener/ball math that runs every single
+// frame (WASD walking, jump-room movement, the WebAudio listener
+// orientation) — .set()'d fresh each use instead of `new`'d, so a full
+// session doesn't churn the GC with a couple hundred tiny Vector3/Euler
+// allocations per second for numbers that never need to outlive one frame.
+const _fwScratch=new THREE.Vector3(), _rtScratch=new THREE.Vector3(), _wishScratch=new THREE.Vector3();
+const _listenerFw=new THREE.Vector3(), _listenerEuler=new THREE.Euler();
+const _ballFwScratch=new THREE.Vector3(), _portalScratch=new THREE.Vector3();
 
 const AMB_COLOR_FIELDS  = ['fogColor','skyStop0','skyStop1','ambientColor','cColor','mColor','particleColor'];
 const AMB_NUMBER_FIELDS = ['fogNear','fogFar','starVisibility','ambientIntensity','cIntensity','mIntensity',
@@ -1239,9 +1247,28 @@ const AMB_NUMBER_FIELDS = ['fogNear','fogFar','starVisibility','ambientIntensity
 // the actual per-frame lerp happens in applyAmbiance(), called every frame
 // from animate() — rather than snapping instantly, so a DM calling "Sturm"
 // mid-session reads as weather rolling in, not a jump-cut.
+// Each ambiance's decor set (medallion/wall-trim/props/particles — see
+// buildTempleDecor() and friends, further down) is real standing GPU
+// memory: several canvas textures plus geometry per preset, times eight
+// presets, adds up if it's all built regardless of whether a session ever
+// actually visits that mood. Built once, lazily, the first time a preset
+// is actually activated, rather than all up front in buildFurniture().
+const decorBuilt = {};
+const decorBuilders = {
+  temple:buildTempleDecor, night:buildNightDecor, combat:buildCombatDecor,
+  storm:buildStormDecor, sea:buildSeaDecor, forest:buildForestDecor,
+  desert:buildDesertDecor, dungeon:buildDungeonDecor,
+};
+function ensureDecorBuilt(name) {
+  if (decorBuilt[name] || !decorBuilders[name]) return;
+  decorBuilders[name]();
+  decorBuilt[name] = true;
+}
+
 function setAmbiance(name, opts={}) {
   const target = AMBIANCE[name];
   if (!target) return;
+  ensureDecorBuilt(name);
   const enteringTemple  = name==='temple'  && currentAmbianceName!=='temple';
   const enteringNight   = name==='night'   && currentAmbianceName!=='night';
   const enteringCombat  = name==='combat'  && currentAmbianceName!=='combat';
@@ -2315,14 +2342,14 @@ function buildFurniture() {
   buildBall();
   buildSecretPlant();
   buildJumpRoom();
-  buildTempleDecor();
-  buildNightDecor();
-  buildCombatDecor();
-  buildStormDecor();
-  buildSeaDecor();
-  buildForestDecor();
-  buildDesertDecor();
-  buildDungeonDecor();
+  // Ambiance decor (temple/night/combat/storm/sea/forest/desert/dungeon) is
+  // NOT built here — each set is a real chunk of geometry/textures (medallion
+  // + wall trim + statues/props + particles, several per preset), and
+  // building all eight up front regardless of which moods a session ever
+  // actually uses was adding a lot of standing GPU memory/texture uploads
+  // for stuff that might never be shown. ensureDecorBuilt() (called from
+  // setAmbiance()) builds each one lazily, the first time it's actually
+  // activated, instead.
 }
 
 // Snake-temple decor — built once, hidden by default, shown only while the
@@ -4328,9 +4355,9 @@ function jrUpdateCheckpoints() {
 }
 
 function updateJumpRoomMovement(dt) {
-  const fw=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-  const rt=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
-  const wish=new THREE.Vector3();
+  const fw = _fwScratch.set(-Math.sin(yaw),0,-Math.cos(yaw));
+  const rt = _rtScratch.set(Math.cos(yaw),0,-Math.sin(yaw));
+  const wish = _wishScratch.set(0,0,0);
   if(keys['KeyW']||keys['ArrowUp'])    wish.add(fw);
   if(keys['KeyS']||keys['ArrowDown'])  wish.sub(fw);
   if(keys['KeyA']||keys['ArrowLeft'])  wish.sub(rt);
@@ -4981,7 +5008,8 @@ function updateMusicIsolation() {
 function updateListener() {
   if (!audioCtx) return;
   const l = audioCtx.listener, t = audioCtx.currentTime;
-  const fw = new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));
+  _listenerEuler.set(pitch,yaw,0,'YXZ');
+  const fw = _listenerFw.set(0,0,-1).applyEuler(_listenerEuler);
 
   // Modern API (Chrome/Edge)
   if (l.positionX) {
@@ -5009,7 +5037,7 @@ function updateBall(dt) {
   if (ball.holder === localUID) {
     // Carried a step in front of the camera and slightly low, so it
     // doesn't sit exactly in the crosshair the whole time it's held.
-    const fw=new THREE.Vector3(); camera.getWorldDirection(fw);
+    const fw=_ballFwScratch; camera.getWorldDirection(fw);
     ball.x = playerPos.x + fw.x*0.6;
     ball.y = playerPos.y - 0.3;
     ball.z = playerPos.z + fw.z*0.6;
@@ -5097,6 +5125,12 @@ function updateBall(dt) {
 }
 
 // ══════════ ANIMATION LOOP ══════════
+// These HUD prompt elements are static (always in the page's own HTML, never
+// recreated) but get read/written every single frame below — looked up once
+// here instead of via getElementById() 60 times a second.
+const proxEl=document.getElementById('prox'), bookPromptEl=document.getElementById('book-prompt'),
+  firePromptEl=document.getElementById('fire-prompt'), jrPromptEl=document.getElementById('jr-prompt'),
+  jrTimerEl=document.getElementById('jr-timer');
 let _t=0;
 function animate() {
   requestAnimationFrame(animate);
@@ -5112,8 +5146,8 @@ function animate() {
     updateJumpRoomMovement(dt);
   } else if (isLocked && !tacticalView) {
     const spd=MOVE_SPEED*dt;
-    const fw =new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
-    const rt =new THREE.Vector3( Math.cos(yaw),0,-Math.sin(yaw));
+    const fw = _fwScratch.set(-Math.sin(yaw),0,-Math.cos(yaw));
+    const rt = _rtScratch.set( Math.cos(yaw),0,-Math.sin(yaw));
     if(keys['KeyW']||keys['ArrowUp'])    playerPos.addScaledVector(fw, spd);
     if(keys['KeyS']||keys['ArrowDown'])  playerPos.addScaledVector(fw,-spd);
     if(keys['KeyA']||keys['ArrowLeft'])  playerPos.addScaledVector(rt,-spd);
@@ -5263,7 +5297,7 @@ function animate() {
 
     // billboard
     u.grp.children.forEach(c=>{
-      if(c.userData.bill) { const wp=new THREE.Vector3(); c.getWorldPosition(wp); c.lookAt(camera.position); }
+      if(c.userData.bill) c.lookAt(camera.position);
     });
 
     if (!u.isLocal) {
@@ -5274,16 +5308,14 @@ function animate() {
   }
 
   // proximity
-  const pe=document.getElementById('prox');
-  if(nearDist<PROX_DIST&&nearName){pe.textContent='▶ '+nearName.toUpperCase()+' IN DER NÄHE';pe.classList.add('show');}
-  else pe.classList.remove('show');
+  if(nearDist<PROX_DIST&&nearName){proxEl.textContent='▶ '+nearName.toUpperCase()+' IN DER NÄHE';proxEl.classList.add('show');}
+  else proxEl.classList.remove('show');
 
   updateBall(dt);
 
   // Book prompt — crosshair-aimed, like token pickup/focus-view, not
   // proximity-based like the ball. While a book is open the hint just
   // reminds you how to close it, regardless of where you're looking.
-  const bookPromptEl=document.getElementById('book-prompt');
   if (openBookIndex!==null) {
     bookPromptEl.innerHTML='<span class="bp-key">F</span> Schließen';
     bookPromptEl.classList.add('show');
@@ -5300,7 +5332,6 @@ function animate() {
 
   // Fire prompt — proximity-based like the ball. Hidden while already
   // burning so it doesn't invite mashing R for no further effect.
-  const firePromptEl=document.getElementById('fire-prompt');
   if (fireSurgeRevertAt===null && hearthLight
       && camera.position.distanceTo(hearthLight.position) < FIRE_INTERACT_RANGE) {
     firePromptEl.innerHTML='<span class="bp-key">R</span> Entfachen';
@@ -5310,18 +5341,16 @@ function animate() {
   }
 
   // Jump-room prompt (plant to enter / portal to leave) + the run timer.
-  const jrPromptEl=document.getElementById('jr-prompt');
   if (!inJumpRoom && jrPlantPos && camera.position.distanceTo(jrPlantPos) < JR_PLANT_RANGE) {
     jrPromptEl.innerHTML='<span class="bp-key">H</span> Erforschen';
     jrPromptEl.classList.add('show');
   } else if (inJumpRoom && jrReturnPortals.some(p=>
-      camera.position.distanceTo(new THREE.Vector3(p.x,p.y+EYE_H,p.z)) < JR_PORTAL_RANGE)) {
+      camera.position.distanceTo(_portalScratch.set(p.x,p.y+EYE_H,p.z)) < JR_PORTAL_RANGE)) {
     jrPromptEl.innerHTML='<span class="bp-key">H</span> Zurückkehren';
     jrPromptEl.classList.add('show');
   } else {
     jrPromptEl.classList.remove('show');
   }
-  const jrTimerEl=document.getElementById('jr-timer');
   if (inJumpRoom) {
     const elapsed = jrRunStart!==null ? (_t-jrRunStart) : jrLastElapsed;
     const myBest = jrLeaderboard[jrKeyFor(localName)];
