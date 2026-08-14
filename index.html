@@ -4604,6 +4604,108 @@ function attachVideoToAvatar(user, videoEl) {
   user.vidMesh.material=new THREE.MeshBasicMaterial({map:tex,side:THREE.DoubleSide});
 }
 
+// Re-points the local preview <video> at whatever the local camera track's
+// current MediaStreamTrack actually is. Needed after any setEnabled(false)
+// -> setEnabled(true) cycle (Agora restarts the capture device rather than
+// just toggling a black-frame flag), since the preview element was pointed
+// at a snapshot MediaStream that never learns about the new track on its
+// own. Shared by the manual camera button and the auto-pause-on-minimize
+// feature below — same fix, two triggers.
+function refreshLocalVideoPreview() {
+  if (!localVideo || !users[localUID]?.videoEl) return;
+  const vel = users[localUID].videoEl;
+  vel.srcObject = new MediaStream([localVideo.getMediaStreamTrack()]);
+  vel.play().catch(()=>{});
+}
+
+// Attaches (or re-attaches) one remote user's video — shared by the normal
+// 'user-published' event handler and resumeVideoForVisibility() below, so
+// there's exactly one implementation of "what a live remote video looks
+// like" regardless of which one triggered the (re)subscribe.
+function attachRemoteVideo(uid, ru) {
+  if (!users[uid]) return;
+  users[uid].videoTrack = ru.videoTrack;
+  try {
+    // Same reconnect scenario as attachVideoToAvatar's dispose above — the
+    // old <video> element is about to be orphaned. It's never in the DOM,
+    // so it won't leak visibly, but a detached element with a live
+    // srcObject can keep decoding in the background until GC gets to it,
+    // which isn't guaranteed to be prompt. Stop it explicitly.
+    if (users[uid].videoEl) { users[uid].videoEl.pause(); users[uid].videoEl.srcObject=null; }
+    const vel=document.createElement('video');
+    vel.autoplay=true; vel.muted=true; vel.playsInline=true;
+    vel.srcObject=new MediaStream([ru.videoTrack.getMediaStreamTrack()]);
+    vel.play().catch(()=>{});
+    attachVideoToAvatar(users[uid],vel);
+    users[uid].videoEl=vel; // reused directly for the focus overlay, not just the 3D texture
+    if (focusedUid===uid) setFocus(uid); // pick up mid-focus if their video just (re)connected
+    renderPip(); if (galleryOpen) renderGallery(); // this user's tile only exists once videoEl is set
+  } catch(e){}
+}
+
+// Undoes attachRemoteVideo — shared by the normal 'user-unpublished' event
+// handler and pauseVideoForVisibility() below.
+function detachRemoteVideo(uid) {
+  if (!users[uid]) return;
+  users[uid].vidMesh.material=new THREE.MeshBasicMaterial({color:0x111111,side:THREE.DoubleSide});
+}
+
+// ══════════ VISIBILITY-DRIVEN VIDEO PAUSE ══════════
+// Minimizing the window (or just switching to another tab) means nothing
+// video-related is actually visible — the 3D scene already stops rendering
+// on its own once requestAnimationFrame gets suspended, but decoding
+// everyone else's camera feed (and encoding your own) keeps running
+// regardless, and is typically the single heaviest ongoing cost in a live
+// call. Pausing it here is purely a local subscription choice — it never
+// touches microphone capture, the noise gate, remote audio playback, or
+// music, all of which keep working exactly as before.
+let videoAutoPaused = false;      // are we currently in an auto-paused-for-visibility state?
+let camWasOffBeforeAutoPause = false; // preserves a deliberately-off camera across the pause/resume cycle, same idea as forceMute's preForceMuteState
+
+async function pauseVideoForVisibility() {
+  if (videoAutoPaused || !agoraClient) return;
+  videoAutoPaused = true;
+
+  camWasOffBeforeAutoPause = camOff;
+  if (localVideo && !camOff) {
+    try { await localVideo.setEnabled(false); } catch(e) {}
+  }
+
+  for (const ru of agoraClient.remoteUsers) {
+    if (ru.uid >= MUSIC_UID_OFFSET || !ru.videoTrack) continue; // music never has video; skip anyone we're not even subscribed to
+    try { await agoraClient.unsubscribe(ru, 'video'); } catch(e) {}
+    detachRemoteVideo(ru.uid);
+  }
+}
+
+async function resumeVideoForVisibility() {
+  if (!videoAutoPaused || !agoraClient) return;
+  videoAutoPaused = false;
+
+  if (localVideo && !camWasOffBeforeAutoPause) {
+    try { await localVideo.setEnabled(true); } catch(e) {}
+    refreshLocalVideoPreview();
+  }
+
+  // Checked against ru.hasVideo (their actual current publish state), not
+  // "whoever we paused" — covers both people who were already publishing
+  // when we minimized AND anyone who started publishing while we were
+  // hidden (the 'user-published' handler below skips subscribing to new
+  // video while hidden, precisely so this is the one place that catches up).
+  for (const ru of agoraClient.remoteUsers) {
+    if (ru.uid >= MUSIC_UID_OFFSET || !ru.hasVideo || ru.videoTrack) continue;
+    try {
+      await agoraClient.subscribe(ru, 'video');
+      attachRemoteVideo(ru.uid, ru);
+    } catch(e) {}
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pauseVideoForVisibility();
+  else resumeVideoForVisibility();
+});
+
 // Toggle the on-screen focus overlay for one remote user. Pass null to
 // close it. Silently does nothing if that user has no video (mic-only) —
 // there's nothing to show, not worth a dedicated empty state for this.
@@ -5498,7 +5600,10 @@ function animate() {
   if(cLight) cLight.intensity=ambLive.cIntensity+Math.sin(_t*.7)*.15;
   if(mLight) mLight.intensity=ambLive.mIntensity+Math.sin(_t*.5+1)*.1;
 
-  renderer.render(scene,camera);
+  // requestAnimationFrame already stops firing once the tab is genuinely
+  // hidden in most browsers, so this rarely matters in practice — but it's
+  // a one-line guarantee rather than relying on that being true everywhere.
+  if (!document.hidden) renderer.render(scene,camera);
 }
 
 function onResize(){
@@ -5560,6 +5665,11 @@ async function initAgora(appId, room, myName, asDM, token) {
   });
 
   agoraClient.on('user-published', async (ru, mediaType) => {
+    // Stay unsubscribed from new video while minimized/hidden — audio always
+    // subscribes normally regardless. resumeVideoForVisibility() catches up
+    // on whatever's actually publishing (checked against ru.hasVideo) once
+    // the tab is visible again, so this isn't a permanent miss, just a defer.
+    if (mediaType==='video' && document.hidden) return;
     try {
       await agoraClient.subscribe(ru, mediaType);
     } catch(e) {
@@ -5649,23 +5759,7 @@ async function initAgora(appId, room, myName, asDM, token) {
       renderPip();
     }
     if (mediaType==='video') {
-      users[uid].videoTrack=ru.videoTrack;
-      try {
-        // Same reconnect scenario as attachVideoToAvatar's dispose above —
-        // the old <video> element is about to be orphaned. It's never in
-        // the DOM, so it won't leak visibly, but a detached element with a
-        // live srcObject can keep decoding in the background until GC gets
-        // to it, which isn't guaranteed to be prompt. Stop it explicitly.
-        if (users[uid].videoEl) { users[uid].videoEl.pause(); users[uid].videoEl.srcObject=null; }
-        const vel=document.createElement('video');
-        vel.autoplay=true; vel.muted=true; vel.playsInline=true;
-        vel.srcObject=new MediaStream([ru.videoTrack.getMediaStreamTrack()]);
-        vel.play().catch(()=>{});
-        attachVideoToAvatar(users[uid],vel);
-        users[uid].videoEl=vel; // reused directly for the focus overlay, not just the 3D texture
-        if (focusedUid===uid) setFocus(uid); // picture up mid-focus if their video just (re)connected
-        renderPip(); if (galleryOpen) renderGallery(); // this user's tile only exists once videoEl is set
-      } catch(e){}
+      attachRemoteVideo(uid, ru);
     }
     if (mediaType==='audio') {
       // Real player uids only ever publish one audio track — their mic —
@@ -5697,8 +5791,7 @@ async function initAgora(appId, room, myName, asDM, token) {
   });
 
   agoraClient.on('user-unpublished',(ru,mt)=>{
-    if(mt==='video'&&users[ru.uid])
-      users[ru.uid].vidMesh.material=new THREE.MeshBasicMaterial({color:0x111111,side:THREE.DoubleSide});
+    if(mt==='video') detachRemoteVideo(ru.uid);
     if(mt==='audio'&&users[ru.uid]){
       // Disconnect the now-dead graph (the track behind it just stopped
       // producing data) — a re-publish on unmute rebuilds it from scratch
@@ -5897,6 +5990,9 @@ async function initAgora(appId, room, myName, asDM, token) {
   // or simulating its physics — matching the token-drag model of "only
   // the person currently in control broadcasts."
   setInterval(()=>{
+    // Nobody can see your position or the ball while the tab is hidden —
+    // same reasoning as pausing video — so there's nothing to broadcast.
+    if (document.hidden) return;
     broadcastPos();
     if (ball.holder===localUID || ball.ownedByMe) broadcastBall(false);
   }, 50);
@@ -6104,19 +6200,7 @@ document.getElementById('btn-cam').addEventListener('click',async()=>{
   const b=document.getElementById('btn-cam');
   b.querySelector('span').textContent=camOff?'Cam aus':'Kamera';
   b.classList.toggle('off',camOff);
-  // Re-enabling can hand back a genuinely restarted capture (Agora stops
-  // the camera device on setEnabled(false), not just a black-frame flag,
-  // and re-acquires it on true) — remote viewers stay fine since the SDK
-  // keeps their subscription in sync itself, but our own local preview
-  // <video> was pointed at a one-time snapshot of the old track back at
-  // join time and never gets told about the new one, so it stays black.
-  // Re-point it at whatever track is actually live now; same element, so
-  // the VideoTexture/PIP/gallery tiles already reading it need no changes.
-  if (!camOff && users[localUID]?.videoEl) {
-    const vel = users[localUID].videoEl;
-    vel.srcObject = new MediaStream([localVideo.getMediaStreamTrack()]);
-    vel.play().catch(()=>{});
-  }
+  if (!camOff) refreshLocalVideoPreview();
 });
 
 document.getElementById('btn-audiomode').addEventListener('click',()=>{
