@@ -1226,12 +1226,16 @@ const AMB_NUMBER_FIELDS = ['fogNear','fogFar','starVisibility','ambientIntensity
 function setAmbiance(name, opts={}) {
   const target = AMBIANCE[name];
   if (!target) return;
+  const enteringTemple = name==='temple' && currentAmbianceName!=='temple';
   ambTransition = { from:{...ambLive}, to:target, t:0 };
   currentAmbianceName = name;
   updateAmbianceButtons();
   // Physical decor can't crossfade like color/light values — just cut it
   // in/out immediately alongside the mood switch itself.
   templeDecor.forEach(o=>{ o.visible = (name==='temple'); });
+  // Runs identically on every client, since this whole function already
+  // does — no separate broadcast needed for the sound itself.
+  if (enteringTemple) playTempleHissSound();
   if (opts.broadcast !== false) broadcastToken({type:'ambiance', name}, true);
 }
 
@@ -2217,18 +2221,29 @@ const templeDecor = [];
 const TEMPLE_BRONZE = 0x4a7a5e; // aged bronze-verdigris — reads as ancient temple metalwork, not a mood tint
 
 function buildTempleDecor() {
-  buildTempleServpent();
+  // Three serpents (not all 8 ribs — that reads as clutter, not motif),
+  // spread around the octagon and varied in size/tightness so the dome
+  // reads as "this whole structure is serpent-carved" rather than "one
+  // ornament got added." Skips index 1 (the secret-wing doorway).
+  buildTempleServpent(0, 0.10, 4.5, 0.037);
+  buildTempleServpent(3, 0.075, 3.2, 0.028);
+  buildTempleServpent(6, 0.13, 5.5, 0.045);
+
   const dmSeatX = -(TABLE_TL/2+0.5);
   templeDecor.push(buildCobraStatue(dmSeatX, -0.7, Math.PI/2));
   templeDecor.push(buildCobraStatue(dmSeatX,  0.7, Math.PI/2));
+
+  buildTempleScaleTrim();
+  buildTempleFloorMedallion();
+  buildTempleBraziers();
 }
 
 // A serpent coiled around one of the dome's own gold ribs, spiraling from
 // the wall up to the apex — reuses the exact same rib-endpoint math
 // buildDome() uses (same octVerts()/DOME_R/WALL_H) so it sits flush
 // against that real rib rather than approximating its position.
-function buildTempleServpent() {
-  const v = octVerts()[0];
+function buildTempleServpent(ribIndex, coilRadius, turns, tubeRadius) {
+  const v = octVerts()[ribIndex];
   const s = DOME_R/Math.hypot(v[0],v[1]);
   const base = new THREE.Vector3(v[0]*s, WALL_H, v[1]*s);
   const apex = new THREE.Vector3(0, WALL_H+DOME_R, 0);
@@ -2239,7 +2254,7 @@ function buildTempleServpent() {
   const u = new THREE.Vector3().crossVectors(dirN, arbitrary).normalize();
   const w = new THREE.Vector3().crossVectors(dirN, u).normalize();
 
-  const coilRadius=0.1, turns=4.5, segs=70, pts=[];
+  const segs=70, pts=[];
   for (let i=0;i<=segs;i++){
     const t=i/segs, angle=t*turns*Math.PI*2;
     pts.push(base.clone()
@@ -2248,7 +2263,7 @@ function buildTempleServpent() {
       .addScaledVector(w, Math.sin(angle)*coilRadius));
   }
   const curve = new THREE.CatmullRomCurve3(pts);
-  const tubeGeo = new THREE.TubeGeometry(curve, 220, 0.037, 8, false);
+  const tubeGeo = new THREE.TubeGeometry(curve, 220, tubeRadius, 8, false);
   const serpent = new THREE.Mesh(tubeGeo, mat(TEMPLE_BRONZE,0,0,0.55,0.25));
   serpent.visible = false;
   scene.add(serpent);
@@ -2256,15 +2271,15 @@ function buildTempleServpent() {
 
   // a small head at the base end, coiled eye-level for anyone standing near
   // that wall, with a faint jade glow instead of the ambiance's own lights
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.075,12,10), mat(TEMPLE_BRONZE,0,0,0.55,0.25));
+  const head = new THREE.Mesh(new THREE.SphereGeometry(tubeRadius*2,12,10), mat(TEMPLE_BRONZE,0,0,0.55,0.25));
   head.position.copy(pts[0]);
   head.visible = false;
   scene.add(head);
   templeDecor.push(head);
   const eyeMat = mat(0xdff08a,0xdff08a,2.2,0);
   [-1,1].forEach(side=>{
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.012,8,8), eyeMat);
-    eye.position.copy(pts[0]).addScaledVector(u, side*0.04).addScaledVector(dirN, 0.05);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(tubeRadius*0.32,8,8), eyeMat);
+    eye.position.copy(pts[0]).addScaledVector(u, side*tubeRadius*1.1).addScaledVector(dirN, tubeRadius*1.4);
     eye.visible = false;
     scene.add(eye);
     templeDecor.push(eye);
@@ -2315,6 +2330,120 @@ function buildCobraStatue(x, z, ry) {
   grp.visible = false;
   scene.add(grp);
   return grp;
+}
+
+// A thin scale-pattern band mounted just in front of the existing wall
+// trim (same octWallDefs() iteration buildRoom() already uses for the
+// real seam/base trim, same skip of index 1 — the secret-wing doorway
+// owns that opening) — new planes floating a few cm proud of the wall,
+// nothing about the walls themselves is touched.
+function buildTempleScaleTrim() {
+  const c=document.createElement('canvas'); c.width=512; c.height=96;
+  const ctx=c.getContext('2d');
+  const r=c.height*0.6;
+  for(let row=0;row<2;row++){
+    const cy=c.height*(row+0.5)/2;
+    const offsetX = row%2===0?0:r*0.5;
+    for(let cx=-r+offsetX; cx<c.width+r; cx+=r*0.9){
+      ctx.beginPath();
+      ctx.arc(cx, cy+r*0.35, r, Math.PI*1.05, Math.PI*1.95);
+      ctx.fillStyle='rgba(74,122,94,0.55)'; ctx.fill();
+      ctx.strokeStyle='rgba(224,184,76,0.4)'; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  }
+  const tex=new THREE.CanvasTexture(c);
+  octWallDefs().forEach(w=>{
+    if(w.index===1) return;
+    const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+    const trim=new THREE.Mesh(new THREE.PlaneGeometry(w.width-0.05,0.16),
+      new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide}));
+    trim.position.set(w.mid[0]+nx*0.03, WALL_H/3-0.24, w.mid[1]+nz*0.03);
+    trim.rotation.y=w.ry;
+    trim.visible=false;
+    scene.add(trim);
+    templeDecor.push(trim);
+  });
+}
+
+// A coiled-serpent medallion inlaid in the floor around the table — same
+// "flat canvas-textured decal a few mm above the real floor" technique
+// already used for the compass rose / secret-room rune, so it reads as
+// paint on stone, not new floor geometry. Radius kept inside the table's
+// own footprint so it doesn't reach the dais or player seats.
+function buildTempleFloorMedallion() {
+  const size=1024;
+  const c=document.createElement('canvas'); c.width=size; c.height=size;
+  const ctx=c.getContext('2d');
+  const cx=size/2, cy=size/2;
+  ctx.strokeStyle='rgba(74,122,94,0.55)'; ctx.lineWidth=10;
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.46,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.30,0,Math.PI*2); ctx.stroke();
+  ctx.strokeStyle='rgba(224,184,76,0.5)'; ctx.lineWidth=14;
+  ctx.beginPath();
+  const turns=2.2, steps=240;
+  for(let i=0;i<=steps;i++){
+    const t=i/steps, rad=size*0.30+(size*0.46-size*0.30)*t, ang=t*turns*Math.PI*2;
+    const x=cx+Math.cos(ang)*rad, y=cy+Math.sin(ang)*rad;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  const headAng=turns*Math.PI*2, headRad=size*0.46;
+  const hx=cx+Math.cos(headAng)*headRad, hy=cy+Math.sin(headAng)*headRad;
+  ctx.fillStyle='rgba(74,122,94,0.8)';
+  ctx.beginPath(); ctx.arc(hx,hy,20,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(223,240,138,0.9)';
+  ctx.beginPath(); ctx.arc(hx-6,hy-6,4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(hx+6,hy-6,4,0,Math.PI*2); ctx.fill();
+
+  const medallion=new THREE.Mesh(new THREE.CircleGeometry(1.6,48),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c), transparent:true}));
+  medallion.rotation.x=-Math.PI/2;
+  medallion.position.set(0,0.007,0); // above the floor (y=0) and the grid helper (y=-0.01)
+  medallion.visible=false;
+  scene.add(medallion);
+  templeDecor.push(medallion);
+}
+
+// Two small incense braziers flanking the table (clear of the seats and
+// the DM's dais), plus one shared drifting-flame particle system for both
+// bowls — same wrap-and-reset technique the dust motes/embers already use,
+// just a dedicated small system so it doesn't touch the hearth's own.
+let templeBrazierParticles;
+function buildTempleBraziers() {
+  const positions=[
+    {x:0, z:-(TABLE_TW/2+0.95)},
+    {x:0, z: (TABLE_TW/2+0.95)},
+  ];
+  positions.forEach(p=>{
+    const grp=new THREE.Group();
+    const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.12,0.55,10), mat(TEMPLE_BRONZE,0,0,0.6,0.2));
+    pedestal.position.y=0.275; grp.add(pedestal);
+    const bowl=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.11,0.14,12,1,true), mat(TEMPLE_BRONZE,0,0,0.55,0.25,THREE.DoubleSide));
+    bowl.position.y=0.57; grp.add(bowl);
+    const glow=new THREE.PointLight(0x7fd88a,0.6,2.2);
+    glow.position.y=0.66; grp.add(glow);
+    addFlicker(glow,0.6);
+    grp.position.set(p.x,0,p.z);
+    grp.visible=false;
+    scene.add(grp);
+    templeDecor.push(grp);
+  });
+
+  const N=36, pos=new Float32Array(N*3), spd=new Float32Array(N), base=new Float32Array(N*3);
+  for(let i=0;i<N;i++){
+    const which=i%2, bx=positions[which].x, bz=positions[which].z;
+    pos[i*3]  =base[i*3]  =bx+(Math.random()-0.5)*0.16;
+    pos[i*3+1]=base[i*3+1]=0.6+Math.random()*0.1;
+    pos[i*3+2]=base[i*3+2]=bz+(Math.random()-0.5)*0.16;
+    spd[i]=0.3+Math.random()*0.35;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.userData.spd=spd; g.userData.base=base;
+  templeBrazierParticles=new THREE.Points(g, new THREE.PointsMaterial({color:0x8fe0a0,size:.022,transparent:true,opacity:.55}));
+  templeBrazierParticles.visible=false;
+  scene.add(templeBrazierParticles);
+  templeDecor.push(templeBrazierParticles);
 }
 
 const BALL_COLOR = 0xe8578f; // pink — deliberately a clear pop of color against the room's gold/teal palette, reads as "this one's a toy"
@@ -2907,6 +3036,36 @@ function playFanfareSound() {
     osc.connect(gain); gain.connect(audioCtx.destination);
     osc.start(t+i*0.09); osc.stop(t+i*0.09+0.36);
   });
+}
+
+// A short filtered-noise hiss plus a few quick low clicks (a rattle),
+// played once the instant the Tempel mood activates — not a loop, unlike
+// a full ambient hiss track that'd need real audio-loop plumbing this app
+// doesn't have yet.
+function playTempleHissSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  const bufSize=Math.floor(audioCtx.sampleRate*0.4);
+  const buffer=audioCtx.createBuffer(1,bufSize,audioCtx.sampleRate);
+  const data=buffer.getChannelData(0);
+  for(let i=0;i<bufSize;i++) data[i]=(Math.random()*2-1)*(1-i/bufSize);
+  const noise=audioCtx.createBufferSource(); noise.buffer=buffer;
+  const bandpass=audioCtx.createBiquadFilter(); bandpass.type='bandpass'; bandpass.frequency.value=3200; bandpass.Q.value=0.8;
+  const hissGain=audioCtx.createGain();
+  hissGain.gain.setValueAtTime(0.12,t);
+  hissGain.gain.exponentialRampToValueAtTime(0.0001,t+0.4);
+  noise.connect(bandpass); bandpass.connect(hissGain); hissGain.connect(audioCtx.destination);
+  noise.start(t); noise.stop(t+0.42);
+
+  for(let i=0;i<5;i++){
+    const ct=t+0.05+i*0.045;
+    const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+    osc.type='square'; osc.frequency.setValueAtTime(120,ct);
+    g.gain.setValueAtTime(0.09,ct);
+    g.gain.exponentialRampToValueAtTime(0.0001,ct+0.03);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(ct); osc.stop(ct+0.035);
+  }
 }
 
 // A glowing archway — used both for the two jump-room return portals and
@@ -4023,6 +4182,24 @@ function animate() {
     for(let i=0;i<spd.length;i++){pos[i*3+1]+=spd[i]*dt*.35*ambLive.emberSpeedMult;if(pos[i*3+1]>1.6)pos[i*3+1]=0;}
     rp.geometry.attributes.position.needsUpdate=true;
     rp.material.opacity=.28+ambLive.emberOpacityBoost+Math.sin(_t*1.2)*.1;
+  }
+  // temple brazier flame — dedicated small system, only runs while visible
+  // (i.e. only during the Tempel mood), same wrap-and-reset idea as the
+  // dust motes/embers above but resetting to each particle's own bowl
+  // position instead of a shared plane.
+  if(templeBrazierParticles && templeBrazierParticles.visible){
+    const pos=templeBrazierParticles.geometry.attributes.position.array;
+    const spd=templeBrazierParticles.geometry.userData.spd;
+    const base=templeBrazierParticles.geometry.userData.base;
+    for(let i=0;i<spd.length;i++){
+      pos[i*3+1]+=spd[i]*dt*.3;
+      if(pos[i*3+1]>base[i*3+1]+0.4){
+        pos[i*3+1]=base[i*3+1];
+        pos[i*3]=base[i*3]+(Math.random()-0.5)*0.05;
+        pos[i*3+2]=base[i*3+2]+(Math.random()-0.5)*0.05;
+      }
+    }
+    templeBrazierParticles.geometry.attributes.position.needsUpdate=true;
   }
   // salt rain — inside joke, see triggerSaltRain(). Just a visibility
   // window on an always-built particle system, independent of whatever
