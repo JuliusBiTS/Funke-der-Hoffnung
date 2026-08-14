@@ -1226,16 +1226,37 @@ const AMB_NUMBER_FIELDS = ['fogNear','fogFar','starVisibility','ambientIntensity
 function setAmbiance(name, opts={}) {
   const target = AMBIANCE[name];
   if (!target) return;
-  const enteringTemple = name==='temple' && currentAmbianceName!=='temple';
+  const enteringTemple  = name==='temple'  && currentAmbianceName!=='temple';
+  const enteringNight   = name==='night'   && currentAmbianceName!=='night';
+  const enteringCombat  = name==='combat'  && currentAmbianceName!=='combat';
+  const enteringStorm   = name==='storm'   && currentAmbianceName!=='storm';
+  const enteringSea     = name==='sea'     && currentAmbianceName!=='sea';
+  const enteringForest  = name==='forest'  && currentAmbianceName!=='forest';
+  const enteringDesert  = name==='desert'  && currentAmbianceName!=='desert';
+  const enteringDungeon = name==='dungeon' && currentAmbianceName!=='dungeon';
   ambTransition = { from:{...ambLive}, to:target, t:0 };
   currentAmbianceName = name;
   updateAmbianceButtons();
   // Physical decor can't crossfade like color/light values — just cut it
   // in/out immediately alongside the mood switch itself.
   templeDecor.forEach(o=>{ o.visible = (name==='temple'); });
+  nightDecor.forEach(o=>{ o.visible = (name==='night'); });
+  combatDecor.forEach(o=>{ o.visible = (name==='combat'); });
+  stormDecor.forEach(o=>{ o.visible = (name==='storm'); });
+  seaDecor.forEach(o=>{ o.visible = (name==='sea'); });
+  forestDecor.forEach(o=>{ o.visible = (name==='forest'); });
+  desertDecor.forEach(o=>{ o.visible = (name==='desert'); });
+  dungeonDecor.forEach(o=>{ o.visible = (name==='dungeon'); });
   // Runs identically on every client, since this whole function already
   // does — no separate broadcast needed for the sound itself.
   if (enteringTemple) playTempleHissSound();
+  if (enteringNight) playNightSound();
+  if (enteringCombat) playCombatSound();
+  if (enteringStorm) playStormSound();
+  if (enteringSea) playSeaSound();
+  if (enteringForest) playForestSound();
+  if (enteringDesert) playDesertSound();
+  if (enteringDungeon) playDungeonSound();
   if (opts.broadcast !== false) broadcastToken({type:'ambiance', name}, true);
 }
 
@@ -2211,6 +2232,13 @@ function buildFurniture() {
   buildSecretPlant();
   buildJumpRoom();
   buildTempleDecor();
+  buildNightDecor();
+  buildCombatDecor();
+  buildStormDecor();
+  buildSeaDecor();
+  buildForestDecor();
+  buildDesertDecor();
+  buildDungeonDecor();
 }
 
 // Snake-temple decor — built once, hidden by default, shown only while the
@@ -2444,6 +2472,778 @@ function buildTempleBraziers() {
   templeBrazierParticles.visible=false;
   scene.add(templeBrazierParticles);
   templeDecor.push(templeBrazierParticles);
+}
+
+// ══════════ SHARED DECOR HELPERS ══════════
+// Generalized versions of the techniques templeDecor above already proved
+// out (rib-hugging tubes, canvas-textured floor medallions, wall trim,
+// standing lights, wrap-and-reset particles) so the seven presets below
+// don't each reinvent them. Same rule as the Temple: every object here is
+// built once, hidden by default, and only ever toggled by setAmbiance() —
+// nothing existing is modified.
+const DECOR_BRONZE = 0x8a7a55; // generic aged-metal fallback, distinct from TEMPLE_BRONZE's greener cast
+
+// A rib-hugging tube from a wall-top corner up toward the dome apex — same
+// math as buildTempleServpent, generalized (no head/eyes baked in, low
+// turns reads as a hanging garland/chain instead of a tight coil). Returns
+// the world-space point list so callers can scatter extra props along it.
+function buildDecorRibTube(decorArray, ribIndex, coilRadius, turns, tubeRadius, color, opts={}) {
+  const v = octVerts()[ribIndex];
+  const s = DOME_R/Math.hypot(v[0],v[1]);
+  const base = new THREE.Vector3(v[0]*s, WALL_H, v[1]*s);
+  const apex = new THREE.Vector3(0, WALL_H+DOME_R, 0);
+  const dir = new THREE.Vector3().subVectors(apex, base);
+  const len = dir.length();
+  const dirN = dir.clone().normalize();
+  const arbitrary = Math.abs(dirN.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+  const u = new THREE.Vector3().crossVectors(dirN, arbitrary).normalize();
+  const w = new THREE.Vector3().crossVectors(dirN, u).normalize();
+  const reach = opts.reach ?? 1;
+
+  const segs=70, pts=[];
+  for (let i=0;i<=segs;i++){
+    const t=i/segs*reach, angle=t*turns*Math.PI*2;
+    pts.push(base.clone()
+      .addScaledVector(dirN, t*len)
+      .addScaledVector(u, Math.cos(angle)*coilRadius)
+      .addScaledVector(w, Math.sin(angle)*coilRadius));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 160, tubeRadius, 8, false),
+    mat(color,0,0, opts.rough ?? 0.7, opts.metal ?? 0.1));
+  tube.visible=false;
+  scene.add(tube);
+  decorArray.push(tube);
+
+  if (opts.knots) {
+    const knotMat = mat(color,0,0, opts.rough ?? 0.7, opts.metal ?? 0.1);
+    for (let i=6;i<pts.length;i+=14){
+      const knot=new THREE.Mesh(new THREE.SphereGeometry(tubeRadius*1.8,8,8), knotMat);
+      knot.position.copy(pts[i]);
+      knot.visible=false;
+      scene.add(knot);
+      decorArray.push(knot);
+    }
+  }
+  return pts;
+}
+
+// A flat canvas-textured decal a hair above the real floor, same technique
+// as the temple serpent medallion / compass rose / secret-room rune —
+// paint on stone, not new floor geometry. All seven presets' medallions
+// share this same (0, 0.007, 0) spot since only one is ever visible at once.
+function buildDecorMedallion(decorArray, drawFn, radius=1.6) {
+  const size=1024;
+  const c=document.createElement('canvas'); c.width=size; c.height=size;
+  drawFn(c.getContext('2d'), size);
+  const medallion=new THREE.Mesh(new THREE.CircleGeometry(radius,48),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c), transparent:true}));
+  medallion.rotation.x=-Math.PI/2;
+  medallion.position.set(0,0.007,0);
+  medallion.visible=false;
+  scene.add(medallion);
+  decorArray.push(medallion);
+  return medallion;
+}
+
+// A thin band of canvas-textured planes mounted a few cm proud of the real
+// walls — same iteration buildTempleScaleTrim() already uses (skips index 1,
+// the secret-wing doorway). By default runs all seven non-door walls, same
+// "the whole room is themed" read the temple's scale trim goes for.
+function buildDecorWallTrim(decorArray, drawFn, opts={}) {
+  const texW = opts.texW ?? 512, texH = opts.texH ?? 96;
+  const c=document.createElement('canvas'); c.width=texW; c.height=texH;
+  drawFn(c.getContext('2d'), texW, texH);
+  const tex=new THREE.CanvasTexture(c);
+  const allow = opts.walls || null;
+  octWallDefs().forEach(w=>{
+    if (w.index===1) return;
+    if (allow && !allow.includes(w.index)) return;
+    const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+    const trim=new THREE.Mesh(new THREE.PlaneGeometry(w.width-0.05, opts.height ?? 0.16),
+      new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide}));
+    trim.position.set(w.mid[0]+nx*0.03, opts.y ?? (WALL_H/3-0.24), w.mid[1]+nz*0.03);
+    trim.rotation.y=w.ry;
+    trim.visible=false;
+    scene.add(trim);
+    decorArray.push(trim);
+  });
+}
+
+// A small standing lamp/brazier (pedestal + open bowl + flickering point
+// light), same shape family as buildTempleBraziers' pair — generalized so
+// Kampf/Hohe See/Wüste/Dungeon can each reskin it (fixture color, flame
+// color, height) instead of duplicating the geometry.
+function buildDecorLight(decorArray, x, z, color, opts={}) {
+  const grp=new THREE.Group();
+  const standH = opts.standH ?? 0.55;
+  const fixMat = mat(opts.fixtureColor ?? DECOR_BRONZE, 0,0, opts.rough ?? 0.6, opts.metal ?? 0.3);
+  const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.11,standH,10), fixMat);
+  pedestal.position.y=standH/2; grp.add(pedestal);
+  const bowl=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.10,0.13,12,1,true),
+    mat(opts.fixtureColor ?? DECOR_BRONZE,0,0,opts.rough ?? 0.55,opts.metal ?? 0.3, THREE.DoubleSide));
+  bowl.position.y=standH+0.065; grp.add(bowl);
+  const glow=new THREE.PointLight(color, opts.intensity ?? 0.6, opts.dist ?? 2.2);
+  glow.position.y=standH+0.16; grp.add(glow);
+  addFlicker(glow, opts.intensity ?? 0.6);
+  grp.position.set(x,0,z);
+  if (opts.ry) grp.rotation.y = opts.ry;
+  grp.visible=false;
+  scene.add(grp);
+  decorArray.push(grp);
+  if (opts.sway) addSway(grp, opts.swayAxis || 'z', opts.sway, opts.swaySpeed || 0.6);
+  return grp;
+}
+
+// Generic drifting-particle system — wrap-and-reset around a set of base
+// points, same idea as the temple braziers' flame motes but generalized to
+// any direction (opts.rise negative = falls, e.g. rain) and any number of
+// spawn points. Every preset's particle effect below registers one of
+// these; a single loop in animate() drives all of them together.
+const decorParticleSystems = [];
+function buildDecorParticles(decorArray, positions, opts={}) {
+  const N = opts.count ?? 30;
+  const pos=new Float32Array(N*3), spd=new Float32Array(N), base=new Float32Array(N*3);
+  for(let i=0;i<N;i++){
+    const p = positions[i % positions.length];
+    const jx=(opts.jitterXZ ?? 0.5), jy=(opts.jitterY ?? 0.3);
+    pos[i*3]  =base[i*3]  = p.x+(Math.random()-0.5)*jx;
+    pos[i*3+1]=base[i*3+1]= (p.y ?? 0.3)+Math.random()*jy;
+    pos[i*3+2]=base[i*3+2]= p.z+(Math.random()-0.5)*jx;
+    spd[i]=(opts.speedMin ?? 0.15)+Math.random()*(opts.speedRange ?? 0.2);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.userData.spd=spd; g.userData.base=base;
+  const pts=new THREE.Points(g, new THREE.PointsMaterial({
+    color:opts.color ?? 0xffffff, size:opts.size ?? 0.02, transparent:true, opacity:opts.opacity ?? 0.5,
+  }));
+  pts.visible=false;
+  scene.add(pts);
+  decorArray.push(pts);
+  decorParticleSystems.push({
+    points:pts, rise:opts.rise ?? 0.3, wrapHeight:opts.wrapHeight ?? 0.4,
+    resetToBase: opts.resetToBase !== false,
+  });
+  return pts;
+}
+
+// Small continuous rotation (rattle/sway/turn) and vertical bob (float)
+// animations for wall- and rib-mounted decor. Each entry captures its
+// object's resting rotation/position once at build time, so the loop in
+// animate() adds an offset rather than overwriting the object's real
+// orientation. visibleRef lets a child (e.g. an owl's head) piggyback on
+// its parent group's visibility instead of needing its own toggle.
+const decorSway = [];
+function addSway(obj, axis, amp, speed, visibleRef) {
+  decorSway.push({obj, axis, amp, speed, phase:Math.random()*10, base:obj.rotation[axis], visibleRef});
+}
+const decorBob = [];
+function addBob(obj, amp, speed, visibleRef) {
+  decorBob.push({obj, baseY:obj.position.y, amp, speed, phase:Math.random()*10, visibleRef});
+}
+// ══════════ NACHT DECOR ══════════
+// Built once, hidden by default, shown only while the Nacht ambiance is
+// active (toggled in setAmbiance() below) — additive only, exactly the
+// templeDecor pattern.
+const nightDecor = [];
+
+function buildNightDecor() {
+  buildNightConstellations();
+  buildNightMoonlight();
+  buildOwl(4);
+  buildDecorMedallion(nightDecor, drawMoonPhaseMedallion);
+}
+
+// Hand-placed (not astronomically real) star clusters connected by thin
+// lines, sitting just inside the existing star-point shell — same GPU
+// point-sprite technique buildDome()'s starLayer() already uses, plus
+// THREE.LineSegments for the connecting strokes.
+function buildNightConstellations() {
+  const r = DOME_R*0.97;
+  const clusters = [
+    [[18,20],[22,35],[20,55],[26,68],[34,66],[40,78],[46,72]],
+    [[30,150],[22,162],[28,175],[20,188],[26,200]],
+    [[15,260],[24,270],[18,282],[15,260]],
+    [[35,300],[30,315],[32,330],[38,340]],
+  ];
+  const linePos=[], dotPos=[];
+  clusters.forEach(cluster=>{
+    cluster.forEach(([thetaDeg,phiDeg])=>{
+      const theta=thetaDeg*Math.PI/180, phi=phiDeg*Math.PI/180;
+      const x=r*Math.sin(theta)*Math.cos(phi), y=WALL_H+r*Math.cos(theta), z=r*Math.sin(theta)*Math.sin(phi);
+      dotPos.push(x,y,z);
+    });
+    for(let i=0;i<cluster.length-1;i++){
+      [cluster[i],cluster[i+1]].forEach(([thetaDeg,phiDeg])=>{
+        const theta=thetaDeg*Math.PI/180, phi=phiDeg*Math.PI/180;
+        linePos.push(r*Math.sin(theta)*Math.cos(phi), WALL_H+r*Math.cos(theta), r*Math.sin(theta)*Math.sin(phi));
+      });
+    }
+  });
+
+  const lg=new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(linePos),3));
+  const lines=new THREE.LineSegments(lg, new THREE.LineBasicMaterial({color:0xbcd0ff, transparent:true, opacity:0.4}));
+  lines.visible=false;
+  scene.add(lines);
+  nightDecor.push(lines);
+
+  const dg=new THREE.BufferGeometry();
+  dg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(dotPos),3));
+  const dots=new THREE.Points(dg, new THREE.PointsMaterial({color:0xeaf1ff, size:3, sizeAttenuation:false, transparent:true, opacity:0.8}));
+  dots.visible=false;
+  scene.add(dots);
+  nightDecor.push(dots);
+}
+
+// A soft moon disc near the apex (offset from the dome's own permanent gold
+// medallion, not on top of it) plus a matching light patch painted onto the
+// tabletop — reads as moonlight falling through, without an actual hole in
+// the dome geometry.
+function buildNightMoonlight() {
+  const apexPos = new THREE.Vector3(0.9, WALL_H+DOME_R*0.9, -0.4);
+
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.5,24),
+    new THREE.MeshBasicMaterial({color:0xdfe8ff, transparent:true, opacity:0.35, side:THREE.DoubleSide}));
+  disc.position.copy(apexPos);
+  disc.lookAt(0, WALL_H, 0);
+  disc.visible=false;
+  scene.add(disc);
+  nightDecor.push(disc);
+
+  const glow = new THREE.PointLight(0xcfd9ff, 0.5, 6);
+  glow.position.copy(apexPos);
+  glow.visible=false;
+  scene.add(glow);
+  addFlicker(glow,0.5);
+  nightDecor.push(glow);
+
+  const c=document.createElement('canvas'); c.width=256; c.height=256;
+  const ctx=c.getContext('2d');
+  const grad=ctx.createRadialGradient(128,128,10,128,128,128);
+  grad.addColorStop(0,'rgba(207,217,255,0.35)');
+  grad.addColorStop(1,'rgba(207,217,255,0)');
+  ctx.fillStyle=grad; ctx.fillRect(0,0,256,256);
+  const patch=new THREE.Mesh(new THREE.CircleGeometry(0.55,32),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(c), transparent:true}));
+  patch.rotation.x=-Math.PI/2;
+  patch.position.set(0,0.786,0); // just above the tabletop (buildTable's own TY=0.78)
+  patch.visible=false;
+  scene.add(patch);
+  nightDecor.push(patch);
+}
+
+// A single quiet owl perched partway up one dome rib, head turning slowly
+// side to side — the room's one deliberate sign of life at night.
+function buildOwl(ribIndex) {
+  const v = octVerts()[ribIndex];
+  const s = DOME_R/Math.hypot(v[0],v[1]);
+  const perchPos = new THREE.Vector3(v[0]*s*0.55, WALL_H*0.72, v[1]*s*0.55);
+
+  const grp = new THREE.Group();
+  const bodyMat = mat(0x3a3226,0,0,0.85,0);
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.11,10,8), bodyMat);
+  body.scale.y=1.3;
+  grp.add(body);
+
+  const headGrp = new THREE.Group();
+  headGrp.position.y=0.13;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.075,10,8), bodyMat);
+  headGrp.add(head);
+  const eyeMat = mat(0xe8c96a,0xe8c96a,1.8,0);
+  [-1,1].forEach(side=>{
+    const eye=new THREE.Mesh(new THREE.SphereGeometry(0.018,8,8), eyeMat);
+    eye.position.set(side*0.035,0.01,0.065);
+    headGrp.add(eye);
+  });
+  grp.add(headGrp);
+
+  grp.position.copy(perchPos);
+  grp.visible=false;
+  scene.add(grp);
+  nightDecor.push(grp);
+  addSway(headGrp, 'y', 0.5, 0.15, grp);
+}
+
+function drawMoonPhaseMedallion(ctx,size) {
+  const cx=size/2, cy=size/2;
+  ctx.strokeStyle='rgba(207,217,234,0.5)'; ctx.lineWidth=8;
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.46,0,Math.PI*2); ctx.stroke();
+  ctx.strokeStyle='rgba(140,160,200,0.35)'; ctx.lineWidth=1;
+  for(let a=0;a<360;a+=30){
+    const rad=a*Math.PI/180;
+    ctx.beginPath();
+    ctx.moveTo(cx+Math.cos(rad)*size*0.30, cy+Math.sin(rad)*size*0.30);
+    ctx.lineTo(cx+Math.cos(rad)*size*0.46, cy+Math.sin(rad)*size*0.46);
+    ctx.stroke();
+  }
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.18,0,Math.PI*2); ctx.clip();
+  ctx.fillStyle='rgba(223,232,255,0.7)';
+  ctx.fillRect(cx-size*0.2,cy-size*0.2,size*0.4,size*0.4);
+  ctx.globalCompositeOperation='destination-out';
+  ctx.beginPath(); ctx.arc(cx+size*0.09,cy-size*0.02,size*0.16,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+// ══════════ KAMPF DECOR ══════════
+const combatDecor = [];
+
+function buildCombatDecor() {
+  const dmSeatX = -(TABLE_TL/2+0.5);
+  buildCombatBanner(2);
+  buildCombatBanner(5);
+  buildWeaponRack(7);
+  buildDecorLight(combatDecor, dmSeatX, -0.7, 0xff6a3a, {fixtureColor:0x2a2a2a, intensity:0.7, dist:2.4});
+  buildDecorLight(combatDecor, dmSeatX,  0.7, 0xff6a3a, {fixtureColor:0x2a2a2a, intensity:0.7, dist:2.4});
+  buildDecorParticles(combatDecor,
+    [{x:dmSeatX,z:-0.7,y:0.6},{x:dmSeatX,z:0.7,y:0.6}],
+    {count:30, color:0xff8a4a, size:0.022, opacity:0.55, rise:0.3, wrapHeight:0.4, jitterXZ:0.16, jitterY:0.1, speedMin:0.3, speedRange:0.35});
+  buildDecorMedallion(combatDecor, drawCrackedMedallion);
+}
+
+// A dark-red banner with a torn, jagged bottom edge and a simple sigil,
+// hung flush against a wall — flutters gently via decorSway.
+function buildCombatBanner(wallIndex) {
+  const w = octWallDefs()[wallIndex];
+  const c=document.createElement('canvas'); c.width=160; c.height=320;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='rgba(120,20,24,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(10,0); ctx.lineTo(150,0); ctx.lineTo(150,250);
+  const teeth=6;
+  for(let i=0;i<=teeth;i++){
+    const x=150-(140/teeth)*i;
+    const y = i%2===0 ? 250 : 300+Math.random()*20;
+    ctx.lineTo(x,y);
+  }
+  ctx.lineTo(10,250);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle='rgba(224,184,76,0.75)'; ctx.lineWidth=5;
+  ctx.beginPath();
+  ctx.moveTo(80,50); ctx.lineTo(80,170);
+  ctx.moveTo(55,90); ctx.lineTo(105,90);
+  ctx.stroke();
+
+  const tex=new THREE.CanvasTexture(c);
+  const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+  const banner=new THREE.Mesh(new THREE.PlaneGeometry(0.55,1.15),
+    new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide}));
+  banner.position.set(w.mid[0]+nx*0.04, WALL_H*0.72, w.mid[1]+nz*0.04);
+  banner.rotation.y=w.ry;
+  banner.visible=false;
+  scene.add(banner);
+  combatDecor.push(banner);
+  addSway(banner, 'z', 0.025, 0.9);
+}
+
+// Crossed blades + a round shield mounted on a wood backing plate, flush
+// against the wall — same tube-along-a-curve family as the cobra statues'
+// bodies, just straight instead of coiled.
+function buildWeaponRack(wallIndex) {
+  const w = octWallDefs()[wallIndex];
+  const grp=new THREE.Group();
+  const ironMat = mat(0x3a3a3d,0,0,0.4,0.7);
+  const plate=new THREE.Mesh(new THREE.BoxGeometry(0.45,0.5,0.04), mat(WOOD_DARK,0,0,0.7,0));
+  plate.position.y=1.3;
+  grp.add(plate);
+  [[-1,0.35],[1,-0.35]].forEach(([side,rot])=>{
+    const blade=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.03,0.9,6), ironMat);
+    blade.position.set(0,1.3,0.03);
+    blade.rotation.z=rot;
+    grp.add(blade);
+    const hilt=new THREE.Mesh(new THREE.SphereGeometry(0.03,8,8), mat(GOLD,GOLD,1.0,0.3,0.4));
+    hilt.position.set(Math.sin(rot)*0.42, 1.3-Math.cos(rot)*0.42, 0.03);
+    grp.add(hilt);
+  });
+  const shield=new THREE.Mesh(new THREE.CircleGeometry(0.16,16), mat(0x5a1c1c,0,0,0.6,0.3));
+  shield.position.set(0,1.05,0.035);
+  grp.add(shield);
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(0.16,0.014,8,16), mat(GOLD,GOLD,0.8,0.3,0.4));
+  rim.position.copy(shield.position);
+  grp.add(rim);
+
+  const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+  grp.position.set(w.mid[0]+nx*0.06, 0, w.mid[1]+nz*0.06);
+  grp.rotation.y=w.ry;
+  grp.visible=false;
+  scene.add(grp);
+  combatDecor.push(grp);
+}
+
+function drawCrackedMedallion(ctx,size) {
+  const cx=size/2, cy=size/2;
+  ctx.strokeStyle='rgba(90,20,20,0.6)'; ctx.lineWidth=8;
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.46,0,Math.PI*2); ctx.stroke();
+  const cracksN=9;
+  for(let i=0;i<cracksN;i++){
+    const ang = (i/cracksN)*Math.PI*2 + Math.random()*0.2;
+    ctx.strokeStyle='rgba(40,10,10,0.7)'; ctx.lineWidth=3+Math.random()*3;
+    ctx.beginPath();
+    let x=cx, y=cy;
+    ctx.moveTo(x,y);
+    const segs=5;
+    for(let s=1;s<=segs;s++){
+      const rad=(size*0.44)*(s/segs);
+      const jitter=(Math.random()-0.5)*0.3;
+      x=cx+Math.cos(ang+jitter)*rad;
+      y=cy+Math.sin(ang+jitter)*rad;
+      ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  ctx.fillStyle='rgba(209,73,91,0.35)';
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.05,0,Math.PI*2); ctx.fill();
+}
+// ══════════ STURM DECOR ══════════
+const stormDecor = [];
+
+function buildStormDecor() {
+  buildStormShutter(2);
+  buildStormWindow(5);
+  buildStormBell(3);
+  buildStormPapers();
+}
+
+// A small wooden shutter flush against a wall, rattling in its hinges via a
+// fast, small-amplitude yaw oscillation (decorSway) — not a change to the
+// existing shakeAmp screen-shake system, just this one prop's own motion.
+function buildStormShutter(wallIndex) {
+  const w = octWallDefs()[wallIndex];
+  const grp=new THREE.Group();
+  const frameMat = mat(WOOD_DARK,0,0,0.7,0);
+  const frame=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.7,0.04), frameMat);
+  grp.add(frame);
+  for(let i=-1;i<=1;i++){
+    const slat=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.06,0.05), frameMat);
+    slat.position.y=i*0.2;
+    grp.add(slat);
+  }
+  const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+  grp.position.set(w.mid[0]+nx*0.04, WALL_H*0.62, w.mid[1]+nz*0.04);
+  grp.rotation.y=w.ry;
+  grp.visible=false;
+  scene.add(grp);
+  stormDecor.push(grp);
+  addSway(grp, 'y', 0.045, 5.5);
+}
+
+// A narrow arrow-slit "window" relief (painted stone frame + a grey sky
+// wash) with real falling rain motes drifting in front of it — the static
+// texture supplies the frame, buildDecorParticles supplies the motion.
+function buildStormWindow(wallIndex) {
+  const w = octWallDefs()[wallIndex];
+  const c=document.createElement('canvas'); c.width=128; c.height=320;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='rgba(20,26,34,0.9)';
+  ctx.fillRect(20,0,88,320);
+  const grad=ctx.createLinearGradient(0,0,0,320);
+  grad.addColorStop(0,'rgba(120,140,160,0.55)');
+  grad.addColorStop(1,'rgba(60,75,95,0.55)');
+  ctx.fillStyle=grad;
+  ctx.fillRect(34,10,60,300);
+  ctx.strokeStyle='rgba(200,210,225,0.25)'; ctx.lineWidth=2;
+  for(let i=0;i<14;i++){
+    const x=40+Math.random()*48;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x-10,320); ctx.stroke();
+  }
+  const tex=new THREE.CanvasTexture(c);
+  const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+  const win=new THREE.Mesh(new THREE.PlaneGeometry(0.45,1.1),
+    new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide}));
+  win.position.set(w.mid[0]+nx*0.035, WALL_H*0.62, w.mid[1]+nz*0.035);
+  win.rotation.y=w.ry;
+  win.visible=false;
+  scene.add(win);
+  stormDecor.push(win);
+
+  const rainOrigin = {x:w.mid[0]+nx*0.15, y:WALL_H*0.62, z:w.mid[1]+nz*0.15};
+  buildDecorParticles(stormDecor, [rainOrigin],
+    {count:22, color:0xaebfd0, size:0.016, opacity:0.5, rise:-1.6, wrapHeight:0.55, jitterXZ:0.28, jitterY:0.55, speedMin:0.8, speedRange:0.4, resetToBase:false});
+}
+
+// A small bell hung from a dome rib base, swinging in the wind.
+function buildStormBell(ribIndex) {
+  const v = octVerts()[ribIndex];
+  const s = DOME_R/Math.hypot(v[0],v[1]);
+  const hangPos = new THREE.Vector3(v[0]*s*0.4, WALL_H*0.85, v[1]*s*0.4);
+  const grp=new THREE.Group();
+  const bellMat = mat(0x6a5a3a,0,0,0.4,0.7);
+  const bell=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.14,12,1,true), bellMat);
+  bell.rotation.x=Math.PI;
+  grp.add(bell);
+  const clapper=new THREE.Mesh(new THREE.SphereGeometry(0.02,8,8), mat(0x3a3226,0,0,0.5,0.5));
+  clapper.position.y=-0.1;
+  grp.add(clapper);
+  grp.position.copy(hangPos);
+  grp.visible=false;
+  scene.add(grp);
+  stormDecor.push(grp);
+  addSway(grp, 'z', 0.18, 1.6);
+}
+
+// A few loose parchment sheets at the table's edge, fluttering slightly.
+function buildStormPapers() {
+  const c=document.createElement('canvas'); c.width=128; c.height=160;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#e8dcc0'; ctx.fillRect(0,0,128,160);
+  ctx.strokeStyle='rgba(90,70,40,0.4)'; ctx.lineWidth=1;
+  for(let i=0;i<6;i++){ ctx.beginPath(); ctx.moveTo(10,20+i*20); ctx.lineTo(118,20+i*20); ctx.stroke(); }
+  const tex=new THREE.CanvasTexture(c);
+  const positions=[{x:-0.7,z:0.35,rot:0.3},{x:-0.55,z:0.42,rot:-0.2},{x:-0.75,z:0.28,rot:0.6}];
+  positions.forEach(p=>{
+    const paper=new THREE.Mesh(new THREE.PlaneGeometry(0.18,0.24),
+      new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide}));
+    paper.rotation.x=-Math.PI/2;
+    paper.rotation.z=p.rot;
+    paper.position.set(p.x,0.79,p.z);
+    paper.visible=false;
+    scene.add(paper);
+    stormDecor.push(paper);
+    addSway(paper, 'x', 0.05, 2.2);
+  });
+}
+// ══════════ HOHE SEE DECOR ══════════
+const seaDecor = [];
+
+function buildSeaDecor() {
+  buildShipWheel(2);
+  buildDecorRibTube(seaDecor, 3, 0.06, 1.2, 0.02, 0x9c8358, {rough:0.85, metal:0, knots:true});
+  buildDecorRibTube(seaDecor, 6, 0.05, 1.0, 0.018, 0x9c8358, {rough:0.85, metal:0, knots:true});
+  buildDecorParticles(seaDecor,
+    [{x:0,z:-1.1,y:0.15},{x:0.8,z:0.6,y:0.12},{x:-0.8,z:0.6,y:0.18},{x:0.9,z:-0.6,y:0.14}],
+    {count:40, color:0x9ff0e0, size:0.018, opacity:0.5, rise:0.12, wrapHeight:0.22, jitterXZ:1.4, jitterY:0.15, speedMin:0.15, speedRange:0.15});
+  buildDecorMedallion(seaDecor, drawSeaChartMedallion);
+  buildDecorLight(seaDecor, 0, -(TABLE_TW/2+0.95), 0xffcf8a, {fixtureColor:0x8a6a3a, intensity:0.55, dist:2.0, sway:0.12, swayAxis:'z', swaySpeed:0.8});
+  buildDecorLight(seaDecor, 0,  (TABLE_TW/2+0.95), 0xffcf8a, {fixtureColor:0x8a6a3a, intensity:0.55, dist:2.0, sway:0.12, swayAxis:'z', swaySpeed:0.85});
+}
+
+// A wooden ship's wheel mounted flush against a wall — torus rim, 8 radial
+// spokes and handles, brass hub.
+function buildShipWheel(wallIndex) {
+  const w = octWallDefs()[wallIndex];
+  const grp=new THREE.Group();
+  const woodMat=mat(WOOD,0,0,0.6,0);
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(0.28,0.025,8,20), woodMat);
+  grp.add(rim);
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.06,10), mat(0x8a6a3a,0,0,0.4,0.5));
+  hub.rotation.x=Math.PI/2;
+  grp.add(hub);
+  for(let i=0;i<8;i++){
+    const ang=(i/8)*Math.PI*2;
+    const spoke=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,0.28,6), woodMat);
+    spoke.position.set(Math.cos(ang)*0.14, Math.sin(ang)*0.14, 0);
+    spoke.rotation.z=ang+Math.PI/2;
+    grp.add(spoke);
+    const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.09,6), woodMat);
+    handle.position.set(Math.cos(ang)*0.30, Math.sin(ang)*0.30, 0);
+    handle.rotation.z=ang+Math.PI/2;
+    grp.add(handle);
+  }
+  const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+  grp.position.set(w.mid[0]+nx*0.05, WALL_H*0.6, w.mid[1]+nz*0.05);
+  grp.rotation.y=w.ry;
+  grp.visible=false;
+  scene.add(grp);
+  seaDecor.push(grp);
+}
+
+function drawSeaChartMedallion(ctx,size) {
+  const cx=size/2, cy=size/2;
+  drawCompassRose(ctx, cx, cy, size*0.42, 'rgba(191,232,224,0.55)');
+  ctx.strokeStyle='rgba(111,208,201,0.6)'; ctx.lineWidth=6;
+  ctx.beginPath();
+  for(let i=0;i<=40;i++){
+    const t=i/40, ang=t*Math.PI*3, rad=size*0.46+Math.sin(t*10)*6;
+    const x=cx+Math.cos(ang)*rad, y=cy+Math.sin(ang)*rad;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+}
+// ══════════ WALD DECOR ══════════
+const forestDecor = [];
+
+function buildForestDecor() {
+  scatterLeaves(forestDecor, buildDecorRibTube(forestDecor,2,0.05,2.0,0.018,0x5a8a4a,{rough:0.9}), 0x7ec25a);
+  scatterLeaves(forestDecor, buildDecorRibTube(forestDecor,5,0.04,1.6,0.015,0x6a9a54,{rough:0.9}), 0x8ccf68);
+  buildDecorParticles(forestDecor,
+    [{x:0,z:0,y:1.1},{x:0.9,z:0.7,y:1.0},{x:-0.9,z:-0.7,y:1.2},{x:0.6,z:-1.0,y:0.9}],
+    {count:36, color:0xd8e878, size:0.02, opacity:0.6, rise:0.06, wrapHeight:0.16, jitterXZ:1.6, jitterY:0.3, speedMin:0.1, speedRange:0.12});
+  buildDecorWallTrim(forestDecor, drawRootTrim);
+  buildDecorMedallion(forestDecor, drawMossMedallion);
+  buildForestMushroomRing();
+  buildWisp(0.9,1.3,0.9,0xcdeb7a);
+  buildWisp(-0.9,1.2,-0.6,0xb8e068);
+}
+
+// Small flattened leaf clusters scattered along an ivy tube's own point
+// list (returned by buildDecorRibTube), so they sit flush against it.
+function scatterLeaves(decorArray, pts, color) {
+  const leafMat = mat(color,0,0,0.9,0);
+  for(let i=4;i<pts.length;i+=10){
+    const leaf=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,5), leafMat);
+    leaf.scale.set(1,0.4,1.6);
+    leaf.position.copy(pts[i]);
+    leaf.visible=false;
+    scene.add(leaf);
+    decorArray.push(leaf);
+  }
+}
+
+function drawRootTrim(ctx,w,h) {
+  ctx.strokeStyle='rgba(80,60,35,0.5)'; ctx.lineWidth=3;
+  for(let i=0;i<10;i++){
+    const y0=h*0.5+(Math.random()-0.5)*h*0.3;
+    ctx.beginPath(); ctx.moveTo(i*(w/10),y0);
+    ctx.bezierCurveTo(i*(w/10)+20,y0+10,i*(w/10)+40,y0-8,i*(w/10)+60,y0+6);
+    ctx.stroke();
+  }
+  ctx.fillStyle='rgba(74,110,58,0.35)';
+  for(let i=0;i<24;i++){
+    ctx.beginPath();
+    ctx.arc(Math.random()*w, h*0.5+(Math.random()-0.5)*h*0.4, 6+Math.random()*6, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawMossMedallion(ctx,size) {
+  const cx=size/2, cy=size/2;
+  ctx.fillStyle='rgba(74,110,58,0.28)';
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.44,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(159,208,112,0.5)'; ctx.lineWidth=6;
+  ctx.beginPath(); ctx.arc(cx,cy,size*0.44,0,Math.PI*2); ctx.stroke();
+}
+
+// A ring of small mushrooms just outside the moss medallion.
+function buildForestMushroomRing() {
+  const capMat=mat(0xa8506a,0,0,0.7,0), stemMat=mat(0xe8dcc0,0,0,0.8,0);
+  const n=7, r=1.55;
+  for(let i=0;i<n;i++){
+    const ang=(i/n)*Math.PI*2;
+    const grp=new THREE.Group();
+    const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.016,0.06,6), stemMat);
+    stem.position.y=0.03; grp.add(stem);
+    const cap=new THREE.Mesh(new THREE.SphereGeometry(0.025,8,6,0,Math.PI*2,0,Math.PI/2), capMat);
+    cap.position.y=0.06; grp.add(cap);
+    grp.position.set(Math.cos(ang)*r, 0, Math.sin(ang)*r);
+    grp.visible=false;
+    scene.add(grp);
+    forestDecor.push(grp);
+  }
+}
+
+// A small floating glow-orb that bobs gently in place.
+function buildWisp(x,y,z,color) {
+  const grp=new THREE.Group();
+  const orb=new THREE.Mesh(new THREE.SphereGeometry(0.035,10,10), mat(color,color,2.0,0));
+  grp.add(orb);
+  const light=new THREE.PointLight(color,0.5,2.4);
+  grp.add(light);
+  addFlicker(light,0.5);
+  grp.position.set(x,y,z);
+  grp.visible=false;
+  scene.add(grp);
+  forestDecor.push(grp);
+  addBob(grp, 0.06, 0.3);
+}
+// ══════════ WÜSTE DECOR ══════════
+const desertDecor = [];
+
+function buildDesertDecor() {
+  const dmSeatX = -(TABLE_TL/2+0.5);
+  buildSandDune(4);
+  buildSandDune(5);
+  buildDecorWallTrim(desertDecor, drawSunFrieze, {height:0.2});
+  buildDecorLight(desertDecor, dmSeatX, -0.7, 0xffb866, {fixtureColor:0x9a7a3a, intensity:0.6, dist:2.2, standH:0.4});
+  buildDecorLight(desertDecor, dmSeatX,  0.7, 0xffb866, {fixtureColor:0x9a7a3a, intensity:0.6, dist:2.2, standH:0.4});
+  buildDecorMedallion(desertDecor, drawSunCompassMedallion);
+  buildDecorParticles(desertDecor,
+    [{x:0,z:-1.3,y:0.05},{x:0,z:1.3,y:0.05},{x:1.3,z:0,y:0.05},{x:-1.3,z:0,y:0.05}],
+    {count:20, color:0xe8c896, size:0.014, opacity:0.22, rise:0.15, wrapHeight:0.5, jitterXZ:0.5, jitterY:0.1, speedMin:0.1, speedRange:0.1});
+}
+
+// A shallow, flattened sand mound piled against a wall's base.
+function buildSandDune(wallIndex) {
+  const w = octWallDefs()[wallIndex];
+  const duneMat = mat(0xd8b378,0,0,0.95,0);
+  const dune=new THREE.Mesh(new THREE.SphereGeometry(0.5,14,8,0,Math.PI*2,0,Math.PI/2), duneMat);
+  dune.scale.set(1.6,0.35,1);
+  const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
+  dune.position.set(w.mid[0]-nx*0.35, 0, w.mid[1]-nz*0.35);
+  dune.rotation.y=w.ry;
+  dune.visible=false;
+  scene.add(dune);
+  desertDecor.push(dune);
+}
+
+function drawSunFrieze(ctx,w,h) {
+  const cy=h/2;
+  for(let cx=40; cx<w; cx+=90){
+    ctx.strokeStyle='rgba(232,168,88,0.55)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(cx,cy,22,0,Math.PI*2); ctx.stroke();
+    for(let a=0;a<360;a+=45){
+      const rad=a*Math.PI/180;
+      ctx.beginPath();
+      ctx.moveTo(cx+Math.cos(rad)*22, cy+Math.sin(rad)*22);
+      ctx.lineTo(cx+Math.cos(rad)*30, cy+Math.sin(rad)*30);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawSunCompassMedallion(ctx,size) {
+  drawCompassRose(ctx, size/2, size/2, size*0.42, 'rgba(224,168,88,0.55)');
+}
+// ══════════ DUNGEON DECOR ══════════
+const dungeonDecor = [];
+
+function buildDungeonDecor() {
+  const dmSeatX = -(TABLE_TL/2+0.5);
+  buildDecorRibTube(dungeonDecor, 2, 0.03, 0.7, 0.02, 0x4a4438, {rough:0.5, metal:0.7});
+  buildDecorRibTube(dungeonDecor, 5, 0.025, 0.6, 0.018, 0x454038, {rough:0.5, metal:0.7});
+  buildDecorWallTrim(dungeonDecor, drawDampTrim);
+  buildDecorMedallion(dungeonDecor, drawGlowCrackMedallion);
+  buildDecorLight(dungeonDecor, dmSeatX, -0.7, 0x8fd0e0, {fixtureColor:0x2c2c2c, intensity:0.55, dist:2.0, standH:0.5});
+  buildDecorLight(dungeonDecor, dmSeatX,  0.7, 0x8fd0e0, {fixtureColor:0x2c2c2c, intensity:0.55, dist:2.0, standH:0.5});
+}
+
+function drawDampTrim(ctx,w,h) {
+  ctx.fillStyle='rgba(60,75,70,0.3)';
+  for(let i=0;i<16;i++){
+    ctx.beginPath();
+    ctx.ellipse(Math.random()*w, h*0.6+(Math.random()-0.5)*h*0.3, 14+Math.random()*10, 6+Math.random()*4, 0,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.strokeStyle='rgba(140,170,180,0.25)'; ctx.lineWidth=1.5;
+  for(let i=0;i<8;i++){
+    const x=Math.random()*w;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x+(Math.random()-0.5)*8,h); ctx.stroke();
+  }
+}
+
+// A cracked flagstone medallion with one thin, unnaturally glowing fissure
+// running through it — the "something unnatural glowing in it" the
+// dungeon's own ambiance comment already hints at, made visible instead of
+// just implied.
+function drawGlowCrackMedallion(ctx,size) {
+  const cx=size/2, cy=size/2;
+  ctx.strokeStyle='rgba(100,100,100,0.4)'; ctx.lineWidth=4;
+  for(let i=0;i<6;i++){
+    ctx.beginPath();
+    ctx.moveTo(cx+(Math.random()-0.5)*size*0.7, cy+(Math.random()-0.5)*size*0.7);
+    ctx.lineTo(cx+(Math.random()-0.5)*size*0.7, cy+(Math.random()-0.5)*size*0.7);
+    ctx.stroke();
+  }
+  ctx.strokeStyle='rgba(140,200,220,0.55)'; ctx.lineWidth=5;
+  ctx.beginPath();
+  let x=cx-size*0.3,y=cy;
+  ctx.moveTo(x,y);
+  for(let i=1;i<=8;i++){
+    x+=size*0.6/8; y+=(Math.random()-0.5)*size*0.06;
+    ctx.lineTo(x,y);
+  }
+  ctx.stroke();
 }
 
 const BALL_COLOR = 0xe8578f; // pink — deliberately a clear pop of color against the room's gold/teal palette, reads as "this one's a toy"
@@ -3065,6 +3865,152 @@ function playTempleHissSound() {
     g.gain.exponentialRampToValueAtTime(0.0001,ct+0.03);
     osc.connect(g); g.connect(audioCtx.destination);
     osc.start(ct); osc.stop(ct+0.035);
+  }
+}
+
+// One-shot ambiance-activation sound cues for the seven presets above, same
+// approach as playTempleHissSound: synthesized via oscillators/filtered
+// noise, played once the instant that mood activates, no audio assets.
+
+function playNightSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  [0,0.28].forEach((dt2,i)=>{
+    const ct=t+dt2;
+    const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+    osc.type='sine';
+    osc.frequency.setValueAtTime(560,ct);
+    osc.frequency.exponentialRampToValueAtTime(380,ct+0.22);
+    g.gain.setValueAtTime(0.0001,ct);
+    g.gain.exponentialRampToValueAtTime(i===0?0.11:0.07,ct+0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001,ct+0.24);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(ct); osc.stop(ct+0.26);
+  });
+}
+
+function playCombatSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  for(let i=0;i<3;i++){
+    const ct=t+i*0.16;
+    const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+    osc.type='sine'; osc.frequency.setValueAtTime(90,ct);
+    osc.frequency.exponentialRampToValueAtTime(50,ct+0.15);
+    g.gain.setValueAtTime(0.22,ct);
+    g.gain.exponentialRampToValueAtTime(0.0001,ct+0.18);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(ct); osc.stop(ct+0.2);
+  }
+}
+
+function playStormSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  const bufSize=Math.floor(audioCtx.sampleRate*0.9);
+  const buffer=audioCtx.createBuffer(1,bufSize,audioCtx.sampleRate);
+  const data=buffer.getChannelData(0);
+  for(let i=0;i<bufSize;i++) data[i]=(Math.random()*2-1)*Math.pow(1-i/bufSize,1.5);
+  const noise=audioCtx.createBufferSource(); noise.buffer=buffer;
+  const lp=audioCtx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=340;
+  const g=audioCtx.createGain();
+  g.gain.setValueAtTime(0.22,t);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.9);
+  noise.connect(lp); lp.connect(g); g.connect(audioCtx.destination);
+  noise.start(t); noise.stop(t+0.92);
+
+  const crack=audioCtx.createOscillator(), cg=audioCtx.createGain();
+  crack.type='square'; crack.frequency.setValueAtTime(140,t);
+  cg.gain.setValueAtTime(0.15,t);
+  cg.gain.exponentialRampToValueAtTime(0.0001,t+0.08);
+  crack.connect(cg); cg.connect(audioCtx.destination);
+  crack.start(t); crack.stop(t+0.09);
+}
+
+function playSeaSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+  osc.type='sawtooth'; osc.frequency.setValueAtTime(110,t);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.14,t+0.25);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+1.1);
+  const lp=audioCtx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=400;
+  osc.connect(lp); lp.connect(g); g.connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+1.15);
+
+  for(let i=0;i<2;i++){
+    const ct=t+0.9+i*0.12;
+    const co=audioCtx.createOscillator(), cg=audioCtx.createGain();
+    co.type='triangle'; co.frequency.setValueAtTime(180-i*40,ct);
+    cg.gain.setValueAtTime(0.06,ct);
+    cg.gain.exponentialRampToValueAtTime(0.0001,ct+0.1);
+    co.connect(cg); cg.connect(audioCtx.destination);
+    co.start(ct); co.stop(ct+0.12);
+  }
+}
+
+function playForestSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  [0,0.12,0.22].forEach((dt2,i)=>{
+    const ct=t+dt2;
+    const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+    osc.type='sine';
+    osc.frequency.setValueAtTime(1800-i*150,ct);
+    osc.frequency.exponentialRampToValueAtTime(2400-i*150,ct+0.05);
+    g.gain.setValueAtTime(0.0001,ct);
+    g.gain.exponentialRampToValueAtTime(0.1,ct+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,ct+0.09);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(ct); osc.stop(ct+0.1);
+  });
+}
+
+function playDesertSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  const bufSize=Math.floor(audioCtx.sampleRate*0.6);
+  const buffer=audioCtx.createBuffer(1,bufSize,audioCtx.sampleRate);
+  const data=buffer.getChannelData(0);
+  for(let i=0;i<bufSize;i++) data[i]=(Math.random()*2-1)*Math.sin(Math.PI*i/bufSize);
+  const noise=audioCtx.createBufferSource(); noise.buffer=buffer;
+  const lp=audioCtx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=900;
+  const g=audioCtx.createGain(); g.gain.setValueAtTime(0.1,t);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.6);
+  noise.connect(lp); lp.connect(g); g.connect(audioCtx.destination);
+  noise.start(t); noise.stop(t+0.62);
+
+  const osc=audioCtx.createOscillator(), bg=audioCtx.createGain();
+  osc.type='sine'; osc.frequency.setValueAtTime(1600,t+0.3);
+  bg.gain.setValueAtTime(0.0001,t+0.3);
+  bg.gain.exponentialRampToValueAtTime(0.08,t+0.32);
+  bg.gain.exponentialRampToValueAtTime(0.0001,t+0.6);
+  osc.connect(bg); bg.connect(audioCtx.destination);
+  osc.start(t+0.3); osc.stop(t+0.62);
+}
+
+function playDungeonSound() {
+  ensureACtx();
+  const t=audioCtx.currentTime;
+  for(let i=0;i<6;i++){
+    const ct=t+i*0.06+Math.random()*0.02;
+    const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+    osc.type='square'; osc.frequency.setValueAtTime(180+Math.random()*80,ct);
+    g.gain.setValueAtTime(0.07,ct);
+    g.gain.exponentialRampToValueAtTime(0.0001,ct+0.05);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(ct); osc.stop(ct+0.06);
+  }
+  const t2=t+0.5;
+  for(let i=0;i<4;i++){
+    const ct=t2+i*0.07;
+    const osc=audioCtx.createOscillator(), g=audioCtx.createGain();
+    osc.type='square'; osc.frequency.setValueAtTime(150,ct);
+    g.gain.setValueAtTime(0.03,ct);
+    g.gain.exponentialRampToValueAtTime(0.0001,ct+0.05);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(ct); osc.stop(ct+0.06);
   }
 }
 
@@ -4200,6 +5146,44 @@ function animate() {
       }
     }
     templeBrazierParticles.geometry.attributes.position.needsUpdate=true;
+  }
+  // shared drifting-particle systems for the seven presets' decor (plankton,
+  // fireflies, heat shimmer, storm rain, ...) — same wrap-and-reset idea as
+  // the temple braziers above, generalized (opts.rise can be negative, e.g.
+  // falling rain) so each preset didn't need its own copy of this loop.
+  decorParticleSystems.forEach(s=>{
+    if(!s.points.visible) return;
+    const pos=s.points.geometry.attributes.position.array;
+    const spd=s.points.geometry.userData.spd;
+    const base=s.points.geometry.userData.base;
+    for(let i=0;i<spd.length;i++){
+      pos[i*3+1]+=spd[i]*dt*s.rise;
+      const rel = pos[i*3+1]-base[i*3+1];
+      const wrapped = s.rise>=0 ? rel>s.wrapHeight : rel<-s.wrapHeight;
+      if(wrapped){
+        pos[i*3+1]=base[i*3+1];
+        if(s.resetToBase){
+          pos[i*3]=base[i*3]+(Math.random()-0.5)*0.05;
+          pos[i*3+2]=base[i*3+2]+(Math.random()-0.5)*0.05;
+        }
+      }
+    }
+    s.points.geometry.attributes.position.needsUpdate=true;
+  });
+  // small continuous rattle/sway/turn and float/bob animations for the same
+  // per-preset decor — skipped entirely under prefers-reduced-motion, same
+  // spirit as combat's own shakeAmp gating.
+  if(!REDUCED_MOTION){
+    decorSway.forEach(s=>{
+      const vis = (s.visibleRef||s.obj).visible;
+      if(!vis) return;
+      s.obj.rotation[s.axis] = s.base + Math.sin(_t*s.speed+s.phase)*s.amp;
+    });
+    decorBob.forEach(s=>{
+      const vis = (s.visibleRef||s.obj).visible;
+      if(!vis) return;
+      s.obj.position.y = s.baseY + Math.sin(_t*s.speed+s.phase)*s.amp;
+    });
   }
   // salt rain — inside joke, see triggerSaltRain(). Just a visibility
   // window on an always-built particle system, independent of whatever
