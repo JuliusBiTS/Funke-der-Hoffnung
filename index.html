@@ -6059,6 +6059,19 @@ document.getElementById('btn-cam').addEventListener('click',async()=>{
   const b=document.getElementById('btn-cam');
   b.querySelector('span').textContent=camOff?'Cam aus':'Kamera';
   b.classList.toggle('off',camOff);
+  // Re-enabling can hand back a genuinely restarted capture (Agora stops
+  // the camera device on setEnabled(false), not just a black-frame flag,
+  // and re-acquires it on true) — remote viewers stay fine since the SDK
+  // keeps their subscription in sync itself, but our own local preview
+  // <video> was pointed at a one-time snapshot of the old track back at
+  // join time and never gets told about the new one, so it stays black.
+  // Re-point it at whatever track is actually live now; same element, so
+  // the VideoTexture/PIP/gallery tiles already reading it need no changes.
+  if (!camOff && users[localUID]?.videoEl) {
+    const vel = users[localUID].videoEl;
+    vel.srcObject = new MediaStream([localVideo.getMediaStreamTrack()]);
+    vel.play().catch(()=>{});
+  }
 });
 
 document.getElementById('btn-audiomode').addEventListener('click',()=>{
