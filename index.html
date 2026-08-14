@@ -1229,6 +1229,9 @@ function setAmbiance(name, opts={}) {
   ambTransition = { from:{...ambLive}, to:target, t:0 };
   currentAmbianceName = name;
   updateAmbianceButtons();
+  // Physical decor can't crossfade like color/light values — just cut it
+  // in/out immediately alongside the mood switch itself.
+  templeDecor.forEach(o=>{ o.visible = (name==='temple'); });
   if (opts.broadcast !== false) broadcastToken({type:'ambiance', name}, true);
 }
 
@@ -2203,6 +2206,115 @@ function buildFurniture() {
   buildBall();
   buildSecretPlant();
   buildJumpRoom();
+  buildTempleDecor();
+}
+
+// Snake-temple decor — built once, hidden by default, shown only while the
+// Tempel ambiance is active (toggled in setAmbiance() below). Deliberately
+// not touching the ambiance color system at all; this is separate geometry
+// with its own material, not a lighting/fog change.
+const templeDecor = [];
+const TEMPLE_BRONZE = 0x4a7a5e; // aged bronze-verdigris — reads as ancient temple metalwork, not a mood tint
+
+function buildTempleDecor() {
+  buildTempleServpent();
+  const dmSeatX = -(TABLE_TL/2+0.5);
+  templeDecor.push(buildCobraStatue(dmSeatX, -0.7, Math.PI/2));
+  templeDecor.push(buildCobraStatue(dmSeatX,  0.7, Math.PI/2));
+}
+
+// A serpent coiled around one of the dome's own gold ribs, spiraling from
+// the wall up to the apex — reuses the exact same rib-endpoint math
+// buildDome() uses (same octVerts()/DOME_R/WALL_H) so it sits flush
+// against that real rib rather than approximating its position.
+function buildTempleServpent() {
+  const v = octVerts()[0];
+  const s = DOME_R/Math.hypot(v[0],v[1]);
+  const base = new THREE.Vector3(v[0]*s, WALL_H, v[1]*s);
+  const apex = new THREE.Vector3(0, WALL_H+DOME_R, 0);
+  const dir = new THREE.Vector3().subVectors(apex, base);
+  const len = dir.length();
+  const dirN = dir.clone().normalize();
+  const arbitrary = Math.abs(dirN.y) < 0.9 ? new THREE.Vector3(0,1,0) : new THREE.Vector3(1,0,0);
+  const u = new THREE.Vector3().crossVectors(dirN, arbitrary).normalize();
+  const w = new THREE.Vector3().crossVectors(dirN, u).normalize();
+
+  const coilRadius=0.1, turns=4.5, segs=70, pts=[];
+  for (let i=0;i<=segs;i++){
+    const t=i/segs, angle=t*turns*Math.PI*2;
+    pts.push(base.clone()
+      .addScaledVector(dirN, t*len)
+      .addScaledVector(u, Math.cos(angle)*coilRadius)
+      .addScaledVector(w, Math.sin(angle)*coilRadius));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const tubeGeo = new THREE.TubeGeometry(curve, 220, 0.037, 8, false);
+  const serpent = new THREE.Mesh(tubeGeo, mat(TEMPLE_BRONZE,0,0,0.55,0.25));
+  serpent.visible = false;
+  scene.add(serpent);
+  templeDecor.push(serpent);
+
+  // a small head at the base end, coiled eye-level for anyone standing near
+  // that wall, with a faint jade glow instead of the ambiance's own lights
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.075,12,10), mat(TEMPLE_BRONZE,0,0,0.55,0.25));
+  head.position.copy(pts[0]);
+  head.visible = false;
+  scene.add(head);
+  templeDecor.push(head);
+  const eyeMat = mat(0xdff08a,0xdff08a,2.2,0);
+  [-1,1].forEach(side=>{
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.012,8,8), eyeMat);
+    eye.position.copy(pts[0]).addScaledVector(u, side*0.04).addScaledVector(dirN, 0.05);
+    eye.visible = false;
+    scene.add(eye);
+    templeDecor.push(eye);
+  });
+}
+
+// Twin cobra-guardian statues, flanking the DM's seat. Body via the same
+// tube-along-a-curve technique as the dome serpent, just a short rearing
+// S-curve instead of a long spiral.
+function buildCobraStatue(x, z, ry) {
+  const grp = new THREE.Group();
+  const bodyMat = mat(TEMPLE_BRONZE,0,0,0.6,0.2);
+
+  const pts = [
+    new THREE.Vector3(0,0,0), new THREE.Vector3(0.05,0.25,0.03),
+    new THREE.Vector3(-0.04,0.5,-0.02), new THREE.Vector3(0.03,0.75,0.02),
+    new THREE.Vector3(0,0.98,0),
+  ];
+  const body = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),40,0.055,8,false), bodyMat);
+  body.castShadow = true;
+  grp.add(body);
+
+  const hood = new THREE.Mesh(new THREE.ConeGeometry(0.22,0.28,10,1,true), bodyMat);
+  hood.scale.z = 0.35; hood.rotation.x = Math.PI;
+  hood.position.set(0,0.92,0);
+  grp.add(hood);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.09,12,10), bodyMat);
+  head.position.set(0,1.04,0.03);
+  grp.add(head);
+
+  const eyeMat = mat(0xdff08a,0xdff08a,2.2,0);
+  [-1,1].forEach(side=>{
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.014,8,8), eyeMat);
+    eye.position.set(side*0.045,1.06,0.09);
+    grp.add(eye);
+  });
+  const eyeLight = new THREE.PointLight(0xdff08a,0.5,1.8);
+  eyeLight.position.set(0,1.06,0.09);
+  grp.add(eyeLight);
+
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.19,0.08,14), mat(STONE_TRIM,0,0,0.6,0.05));
+  plinth.position.y=0.04;
+  grp.add(plinth);
+
+  grp.position.set(x,0,z);
+  grp.rotation.y = ry;
+  grp.visible = false;
+  scene.add(grp);
+  return grp;
 }
 
 const BALL_COLOR = 0xe8578f; // pink — deliberately a clear pop of color against the room's gold/teal palette, reads as "this one's a toy"
