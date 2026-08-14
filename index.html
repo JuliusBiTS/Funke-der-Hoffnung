@@ -4809,6 +4809,20 @@ function updateNoiseGate() {
 }
 let gateLevelBuf = null;
 
+// requestAnimationFrame (what animate() runs on) gets throttled to near-zero
+// or fully suspended once the window is minimized or the tab is hidden long
+// enough — browsers correctly assume nothing needs painting, but this gate
+// sits directly in the live mic's signal path, not just the 3D scene. If it
+// happened to be closed (gain 0) the instant the tab was minimized, relying
+// on animate() alone meant it stayed silently closed for as long as the tab
+// stayed backgrounded — heard as "the sound is just gone" while minimized,
+// even though the call itself was still fully connected. setInterval is
+// throttled while hidden too, but never fully paused like rAF is, so the
+// gate keeps re-evaluating (if more slowly) instead of freezing shut. Safe
+// to run unconditionally from page load — updateNoiseGate() itself no-ops
+// until buildGatedMicTrack() has actually built the graph after joining.
+setInterval(updateNoiseGate, 50);
+
 // The secret wing (corridor + room) is walled off from the main room for
 // audio purposes, not just distance falloff — once past the doorway
 // threshold, treat it as a separate acoustic zone so occupants of one
@@ -5170,7 +5184,9 @@ function animate() {
   // listener
   updateListener();
   updateMusicIsolation();
-  updateNoiseGate();
+  // updateNoiseGate() runs on its own setInterval now, not here — see its
+  // definition — specifically so it keeps working while the window is
+  // minimized/hidden and animate()'s rAF loop is throttled or paused.
 
   // held token follows the aim point across the map, throttled network
   // update so everyone sees it move live during a drag, not just on drop.
