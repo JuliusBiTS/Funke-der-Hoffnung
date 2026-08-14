@@ -2737,9 +2737,15 @@ function buildNightMoonlight() {
 // A single quiet owl perched partway up one dome rib, head turning slowly
 // side to side — the room's one deliberate sign of life at night.
 function buildOwl(ribIndex) {
+  // Perched low on the real gold rib itself (same base→apex line
+  // buildDome()'s ribBetween() draws), not floating unsupported in open
+  // air — t=0.16 keeps it close to the wall-top corner, eye level for
+  // someone standing near that wall rather than up near the dome apex.
   const v = octVerts()[ribIndex];
   const s = DOME_R/Math.hypot(v[0],v[1]);
-  const perchPos = new THREE.Vector3(v[0]*s*0.55, WALL_H*0.72, v[1]*s*0.55);
+  const base = new THREE.Vector3(v[0]*s, WALL_H, v[1]*s);
+  const apex = new THREE.Vector3(0, WALL_H+DOME_R, 0);
+  const perchPos = base.clone().lerp(apex, 0.16);
 
   const grp = new THREE.Group();
   const bodyMat = mat(0x3a3226,0,0,0.85,0);
@@ -2793,7 +2799,7 @@ function buildCombatDecor() {
   const dmSeatX = -(TABLE_TL/2+0.5);
   buildCombatBanner(2);
   buildCombatBanner(5);
-  buildWeaponRack(7);
+  buildWeaponRack(dmSeatX-0.75, 0);
   buildDecorLight(combatDecor, dmSeatX, -0.7, 0xff6a3a, {fixtureColor:0x2a2a2a, intensity:0.7, dist:2.4});
   buildDecorLight(combatDecor, dmSeatX,  0.7, 0xff6a3a, {fixtureColor:0x2a2a2a, intensity:0.7, dist:2.4});
   buildDecorParticles(combatDecor,
@@ -2803,7 +2809,11 @@ function buildCombatDecor() {
 }
 
 // A dark-red banner with a torn, jagged bottom edge and a simple sigil,
-// hung flush against a wall — flutters gently via decorSway.
+// hung high on the wall — every wall in this room is already claimed at
+// portrait/bookshelf/fireplace height (roughly y=0 to 2.4), so this and
+// every other single wall-mounted prop below lives in the clear band
+// between that furniture's top and the dome seam (y≈2.45–3.05) instead.
+// Flutters gently via decorSway.
 function buildCombatBanner(wallIndex) {
   const w = octWallDefs()[wallIndex];
   const c=document.createElement('canvas'); c.width=160; c.height=320;
@@ -2828,9 +2838,9 @@ function buildCombatBanner(wallIndex) {
 
   const tex=new THREE.CanvasTexture(c);
   const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
-  const banner=new THREE.Mesh(new THREE.PlaneGeometry(0.55,1.15),
+  const banner=new THREE.Mesh(new THREE.PlaneGeometry(0.34,0.7),
     new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide}));
-  banner.position.set(w.mid[0]+nx*0.04, WALL_H*0.72, w.mid[1]+nz*0.04);
+  banner.position.set(w.mid[0]+nx*0.04, 2.75, w.mid[1]+nz*0.04);
   banner.rotation.y=w.ry;
   banner.visible=false;
   scene.add(banner);
@@ -2838,14 +2848,22 @@ function buildCombatBanner(wallIndex) {
   addSway(banner, 'z', 0.025, 0.9);
 }
 
-// Crossed blades + a round shield mounted on a wood backing plate, flush
-// against the wall — same tube-along-a-curve family as the cobra statues'
-// bodies, just straight instead of coiled.
-function buildWeaponRack(wallIndex) {
-  const w = octWallDefs()[wallIndex];
+// Crossed blades + a round shield on a freestanding wooden stand — every
+// wall is already spoken for (portraits/library/fireplace), so this is
+// grounded on the floor near the DM seat instead of wall-mounted, the same
+// way the temple's braziers and cobra statues stand free rather than
+// hanging off a wall that has no room left.
+function buildWeaponRack(x, z) {
   const grp=new THREE.Group();
   const ironMat = mat(0x3a3a3d,0,0,0.4,0.7);
-  const plate=new THREE.Mesh(new THREE.BoxGeometry(0.45,0.5,0.04), mat(WOOD_DARK,0,0,0.7,0));
+  const woodMat = mat(WOOD_DARK,0,0,0.7,0);
+
+  const foot=new THREE.Mesh(new THREE.CylinderGeometry(0.17,0.19,0.05,14), woodMat);
+  foot.position.y=0.025; grp.add(foot);
+  const post=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.045,1.25,8), woodMat);
+  post.position.y=0.05+1.25/2; grp.add(post);
+
+  const plate=new THREE.Mesh(new THREE.BoxGeometry(0.45,0.5,0.04), woodMat);
   plate.position.y=1.3;
   grp.add(plate);
   [[-1,0.35],[1,-0.35]].forEach(([side,rot])=>{
@@ -2864,9 +2882,7 @@ function buildWeaponRack(wallIndex) {
   rim.position.copy(shield.position);
   grp.add(rim);
 
-  const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
-  grp.position.set(w.mid[0]+nx*0.06, 0, w.mid[1]+nz*0.06);
-  grp.rotation.y=w.ry;
+  grp.position.set(x,0,z);
   grp.visible=false;
   scene.add(grp);
   combatDecor.push(grp);
@@ -2913,15 +2929,17 @@ function buildStormShutter(wallIndex) {
   const w = octWallDefs()[wallIndex];
   const grp=new THREE.Group();
   const frameMat = mat(WOOD_DARK,0,0,0.7,0);
-  const frame=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.7,0.04), frameMat);
+  const frame=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.44,0.04), frameMat);
   grp.add(frame);
   for(let i=-1;i<=1;i++){
-    const slat=new THREE.Mesh(new THREE.BoxGeometry(0.46,0.06,0.05), frameMat);
-    slat.position.y=i*0.2;
+    const slat=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.05,0.05), frameMat);
+    slat.position.y=i*0.13;
     grp.add(slat);
   }
+  // High on the wall, clear of the library/portrait/fireplace furniture
+  // every wall already carries below y≈2.4 — see buildCombatBanner's note.
   const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
-  grp.position.set(w.mid[0]+nx*0.04, WALL_H*0.62, w.mid[1]+nz*0.04);
+  grp.position.set(w.mid[0]+nx*0.04, 2.78, w.mid[1]+nz*0.04);
   grp.rotation.y=w.ry;
   grp.visible=false;
   scene.add(grp);
@@ -2932,6 +2950,9 @@ function buildStormShutter(wallIndex) {
 // A narrow arrow-slit "window" relief (painted stone frame + a grey sky
 // wash) with real falling rain motes drifting in front of it — the static
 // texture supplies the frame, buildDecorParticles supplies the motion.
+// Mounted high as a clerestory slit (every wall's lower half is already
+// claimed by portraits/library/fireplace), which also reads architecturally
+// natural for a narrow window letting storm light in near the roofline.
 function buildStormWindow(wallIndex) {
   const w = octWallDefs()[wallIndex];
   const c=document.createElement('canvas'); c.width=128; c.height=320;
@@ -2950,24 +2971,28 @@ function buildStormWindow(wallIndex) {
   }
   const tex=new THREE.CanvasTexture(c);
   const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
-  const win=new THREE.Mesh(new THREE.PlaneGeometry(0.45,1.1),
+  const win=new THREE.Mesh(new THREE.PlaneGeometry(0.28,0.68),
     new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide}));
-  win.position.set(w.mid[0]+nx*0.035, WALL_H*0.62, w.mid[1]+nz*0.035);
+  win.position.set(w.mid[0]+nx*0.035, 2.72, w.mid[1]+nz*0.035);
   win.rotation.y=w.ry;
   win.visible=false;
   scene.add(win);
   stormDecor.push(win);
 
-  const rainOrigin = {x:w.mid[0]+nx*0.15, y:WALL_H*0.62, z:w.mid[1]+nz*0.15};
+  const rainOrigin = {x:w.mid[0]+nx*0.15, y:2.72, z:w.mid[1]+nz*0.15};
   buildDecorParticles(stormDecor, [rainOrigin],
     {count:22, color:0xaebfd0, size:0.016, opacity:0.5, rise:-1.6, wrapHeight:0.55, jitterXZ:0.28, jitterY:0.55, speedMin:0.8, speedRange:0.4, resetToBase:false});
 }
 
-// A small bell hung from a dome rib base, swinging in the wind.
+// A small bell hung from a dome rib, low near the wall-top corner (on the
+// real base→apex rib line, not floating unsupported in open air), swinging
+// in the wind.
 function buildStormBell(ribIndex) {
   const v = octVerts()[ribIndex];
   const s = DOME_R/Math.hypot(v[0],v[1]);
-  const hangPos = new THREE.Vector3(v[0]*s*0.4, WALL_H*0.85, v[1]*s*0.4);
+  const base = new THREE.Vector3(v[0]*s, WALL_H, v[1]*s);
+  const apex = new THREE.Vector3(0, WALL_H+DOME_R, 0);
+  const hangPos = base.clone().lerp(apex, 0.14);
   const grp=new THREE.Group();
   const bellMat = mat(0x6a5a3a,0,0,0.4,0.7);
   const bell=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.14,12,1,true), bellMat);
@@ -3020,29 +3045,30 @@ function buildSeaDecor() {
 }
 
 // A wooden ship's wheel mounted flush against a wall — torus rim, 8 radial
-// spokes and handles, brass hub.
+// spokes and handles, brass hub. High on the wall, clear of the library/
+// portrait/fireplace furniture every wall already carries below y≈2.4.
 function buildShipWheel(wallIndex) {
   const w = octWallDefs()[wallIndex];
   const grp=new THREE.Group();
   const woodMat=mat(WOOD,0,0,0.6,0);
-  const rim=new THREE.Mesh(new THREE.TorusGeometry(0.28,0.025,8,20), woodMat);
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(0.2,0.02,8,20), woodMat);
   grp.add(rim);
-  const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.06,10), mat(0x8a6a3a,0,0,0.4,0.5));
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.05,10), mat(0x8a6a3a,0,0,0.4,0.5));
   hub.rotation.x=Math.PI/2;
   grp.add(hub);
   for(let i=0;i<8;i++){
     const ang=(i/8)*Math.PI*2;
-    const spoke=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,0.28,6), woodMat);
-    spoke.position.set(Math.cos(ang)*0.14, Math.sin(ang)*0.14, 0);
+    const spoke=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.2,6), woodMat);
+    spoke.position.set(Math.cos(ang)*0.1, Math.sin(ang)*0.1, 0);
     spoke.rotation.z=ang+Math.PI/2;
     grp.add(spoke);
-    const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.09,6), woodMat);
-    handle.position.set(Math.cos(ang)*0.30, Math.sin(ang)*0.30, 0);
+    const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.014,0.014,0.07,6), woodMat);
+    handle.position.set(Math.cos(ang)*0.215, Math.sin(ang)*0.215, 0);
     handle.rotation.z=ang+Math.PI/2;
     grp.add(handle);
   }
   const nx=Math.sin(w.ry), nz=Math.cos(w.ry);
-  grp.position.set(w.mid[0]+nx*0.05, WALL_H*0.6, w.mid[1]+nz*0.05);
+  grp.position.set(w.mid[0]+nx*0.05, 2.75, w.mid[1]+nz*0.05);
   grp.rotation.y=w.ry;
   grp.visible=false;
   scene.add(grp);
