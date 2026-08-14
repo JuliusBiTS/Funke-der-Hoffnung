@@ -417,7 +417,11 @@ canvas{display:block}
     <div class="gstt" style="margin-top:10px">Nebel des Krieges</div>
     <button class="pb" id="fog-reveal-all-btn">👁 Alles aufdecken</button>
     <button class="pb" id="fog-cover-all-btn">🌫 Alles verdunkeln</button>
-    <div class="mstat">Taste <span class="bp-key">C</span> halten + auf die Karte schauen zum Aufdecken</div>
+    <div class="vol-row" style="margin-top:8px">
+      <div class="vol-label"><span>Pinselgröße</span><span id="fog-brush-val">100%</span></div>
+      <input type="range" id="fog-brush-slider" min="30" max="300" value="100"/>
+    </div>
+    <div class="mstat">Taste <span class="bp-key">C</span> halten + auf die Karte schauen zum Aufdecken — oder in der Taktikansicht direkt mit der Maus ziehen</div>
   </div>
   <div class="gm-sec">
     <div class="gstt-row">
@@ -1349,7 +1353,13 @@ let battleMapMesh = null, defaultMapTexture = null, currentMapUrl = null;
 let fogCanvas, fogCtx, fogTexture, fogMesh;
 const fogReveals = []; // {u,v,r} history — replayed for late-joiners, mirrors exactly what was broadcast
 let fogFullyRevealed = false;
-const FOG_BRUSH_RADIUS = 0.09; // UV units — roughly "one room" per dab
+const FOG_BRUSH_RADIUS_DEFAULT = 0.09; // UV units — roughly "one room" per dab, the original fixed value
+const FOG_BRUSH_KEY = 'fantasyRoomFogBrush';
+// DM-adjustable brush size (the #fog-brush-slider in the GM panel below) —
+// local-only, never broadcast, persisted like FOV/music volume: every
+// client paints its own fog locally from the same u/v/r the DM broadcasts,
+// so only the DM's own chosen radius needs to travel over the network.
+let fogBrushRadius = parseFloat(localStorage.getItem(FOG_BRUSH_KEY)) || FOG_BRUSH_RADIUS_DEFAULT;
 const FOG_BROADCAST_MS = 90;   // network throttle; local painting itself is never throttled
 let lastFogBroadcastAt = 0;
 
@@ -1357,6 +1367,13 @@ let lastFogBroadcastAt = 0;
 const TOKEN_RADIUS = 0.055;
 const tokens = {}; // id -> {grp, disc, u, v, owner, lastBroadcast}
 let heldTokenId = null;
+// Tactical-view mouse interaction — while tacticalView is on, the fixed
+// bird's-eye camera never rotates (mouse-look is frozen, see the
+// mousemove listener below), so the crosshair-at-screen-center idiom
+// everything else uses can't aim anywhere. These let the same raycast
+// aim at the real cursor position instead, only while tacticalView is on.
+let tacticalMouseNDC = null; // {x,y} in NDC; null falls back to screen center
+let tacticalFogPainting = false;
 const tokenRaycaster = new THREE.Raycaster();
 
 // ══════════ FOCUS VIEW ══════════
@@ -1494,7 +1511,57 @@ document.addEventListener('pointerlockchange', () => {
   isLocked = document.pointerLockElement === canvas;
   if (isLocked) introActive = false; // cut from the establishing shot to first-person the instant control is taken
   document.body.classList.toggle('locked', isLocked);
-  document.getElementById('lock-prompt').classList.toggle('vis', !isLocked);
+  // Suppressed during tactical view — that mode uses a free, visible mouse
+  // cursor to click tokens/fog on the table, not pointer lock, so the
+  // "click to look around" prompt would otherwise sit on top of it.
+  document.getElementById('lock-prompt').classList.toggle('vis', !isLocked && !tacticalView);
+});
+
+// ══════════ TACTICAL VIEW MOUSE INTERACTION ══════════
+// The fixed bird's-eye camera never rotates while tacticalView is on (see
+// the mousemove listener just below), so there's no crosshair to aim with
+// WASD-style look — instead, the real mouse cursor (pointer lock is exited
+// the instant tactical view turns on, see the #btn-tactical handler)
+// clicks and drags directly on the table: a token under the cursor grabs
+// on mousedown and drops on mouseup, same permission rules as the normal
+// F-key pickup; dragging on empty map paints fog away, DM-only, same as
+// holding C in first-person. Both reuse the exact same per-frame follow/
+// paint loops in animate() — only the raycast's aim point changes.
+canvas.addEventListener('mousemove', e => {
+  if (!tacticalView) return;
+  const rect = canvas.getBoundingClientRect();
+  tacticalMouseNDC = {
+    x: ((e.clientX-rect.left)/rect.width)*2-1,
+    y: -((e.clientY-rect.top)/rect.height)*2+1,
+  };
+});
+canvas.addEventListener('mousedown', e => {
+  if (!tacticalView || e.button!==0 || !battleMapMesh || heldTokenId) return;
+  const ndc = tacticalMouseNDC || {x:0,y:0};
+  tokenRaycaster.setFromCamera(ndc, camera);
+  const tokenMeshes = Object.values(tokens).map(t=>t.disc);
+  const tHit = tokenRaycaster.intersectObjects(tokenMeshes)[0];
+  if (tHit) {
+    const id = tHit.object.userData.tokenId;
+    const canMove = isDM || tokens[id]?.category==='player';
+    if (canMove) heldTokenId = id;
+    return;
+  }
+  if (isDM && fogMesh && fogMesh.visible) {
+    const mHit = tokenRaycaster.intersectObject(battleMapMesh)[0];
+    if (mHit) tacticalFogPainting = true;
+  }
+});
+document.addEventListener('mouseup', e => {
+  if (e.button!==0) return;
+  tacticalFogPainting = false;
+  if (tacticalView && heldTokenId && battleMapMesh) {
+    const ndc = tacticalMouseNDC || {x:0,y:0};
+    tokenRaycaster.setFromCamera(ndc, camera);
+    const hit = tokenRaycaster.intersectObject(battleMapMesh)[0];
+    if (hit) moveToken(heldTokenId, hit.uv.x, hit.uv.y, true, true);
+    heldTokenId = null;
+  }
 });
 
 document.addEventListener('mousemove', e => {
@@ -4962,7 +5029,7 @@ function animate() {
   // the same `camera` for both means every raycast-based interaction
   // (token pickup/drop/drag) keeps working unchanged in either mode.
   if (tacticalView && battleMapMesh) {
-    camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+0.82, battleMapMesh.position.z); // two more 20% steps down from 1.28m (which was itself 20% down from the original 1.6m)
+    camera.position.set(battleMapMesh.position.x, battleMapMesh.position.y+0.656, battleMapMesh.position.z); // another 20% step down from 0.82m (itself 20% down from 1.28m, itself 20% down from the original 1.6m)
     camera.rotation.set(-Math.PI/2, 0, 0, 'YXZ');
   } else if (introActive && !isLocked) {
     updateIntroCamera(_t);
@@ -4986,10 +5053,14 @@ function animate() {
   updateListener();
   updateMusicIsolation();
 
-  // held token follows the crosshair across the map, throttled network
-  // update so everyone sees it move live during a drag, not just on drop
+  // held token follows the aim point across the map, throttled network
+  // update so everyone sees it move live during a drag, not just on drop.
+  // Aim point is the real mouse cursor during tactical view (see the
+  // canvas mousedown/mousemove handlers above) since that camera never
+  // rotates, otherwise the usual screen-center crosshair.
   if (heldTokenId && tokens[heldTokenId] && battleMapMesh) {
-    tokenRaycaster.setFromCamera({x:0,y:0}, camera);
+    const aimNDC = (tacticalView && tacticalMouseNDC) ? tacticalMouseNDC : {x:0,y:0};
+    tokenRaycaster.setFromCamera(aimNDC, camera);
     const hit = tokenRaycaster.intersectObject(battleMapMesh)[0];
     if (hit) {
       // Position directly from the raycast hit every frame (smoothest,
@@ -5006,22 +5077,28 @@ function animate() {
     }
   }
 
-  // Fog of war — DM holds C while looking at the map, same crosshair idiom
-  // as everything else (token pickup, books, the fireplace). Local painting
-  // happens every frame for instant feedback; only the network broadcast is
-  // throttled, same reasoning as the token-drag block just above. Each dab
-  // is sent reliably (unlike position updates) since it's permanent state,
-  // not a value the next update supersedes.
-  if (isDM && isLocked && keys['KeyC'] && battleMapMesh && fogMesh && fogMesh.visible) {
-    tokenRaycaster.setFromCamera({x:0,y:0}, camera);
+  // Fog of war — DM holds C while looking at the map in first-person, or
+  // click-drags on empty map during tactical view (tacticalFogPainting,
+  // set by the canvas mousedown/mouseup handlers above); both aim the same
+  // raycast and share this one paint loop. Local painting happens every
+  // frame for instant feedback; only the network broadcast is throttled,
+  // same reasoning as the token-drag block just above. Each dab is sent
+  // reliably (unlike position updates) since it's permanent state, not a
+  // value the next update supersedes. Brush radius (fogBrushRadius) is the
+  // DM's own adjustable setting from the GM panel slider.
+  const fogPaintActive = isDM && fogMesh && fogMesh.visible && battleMapMesh &&
+    ((isLocked && keys['KeyC']) || (tacticalView && tacticalFogPainting));
+  if (fogPaintActive) {
+    const aimNDC = (tacticalView && tacticalMouseNDC) ? tacticalMouseNDC : {x:0,y:0};
+    tokenRaycaster.setFromCamera(aimNDC, camera);
     const hit = tokenRaycaster.intersectObject(battleMapMesh)[0];
     if (hit) {
-      fogRevealAt(hit.uv.x, hit.uv.y, FOG_BRUSH_RADIUS);
+      fogRevealAt(hit.uv.x, hit.uv.y, fogBrushRadius);
       const now = performance.now();
       if (now - lastFogBroadcastAt > FOG_BROADCAST_MS) {
         lastFogBroadcastAt = now;
-        fogReveals.push({u:hit.uv.x, v:hit.uv.y, r:FOG_BRUSH_RADIUS});
-        broadcastToken({type:'fogReveal', u:hit.uv.x, v:hit.uv.y, r:FOG_BRUSH_RADIUS}, true);
+        fogReveals.push({u:hit.uv.x, v:hit.uv.y, r:fogBrushRadius});
+        broadcastToken({type:'fogReveal', u:hit.uv.x, v:hit.uv.y, r:fogBrushRadius}, true);
       }
     }
   }
@@ -5858,6 +5935,17 @@ document.getElementById('btn-tactical').addEventListener('click',()=>{
   const b=document.getElementById('btn-tactical');
   b.querySelector('span').textContent=tacticalView?'Normale Ansicht':'Taktische Ansicht';
   b.classList.toggle('str',tacticalView);
+  if (tacticalView) {
+    // Exit pointer lock so the real mouse cursor is free to click tokens/
+    // fog on the table (see the canvas mousedown/mousemove handlers) —
+    // this fixed bird's-eye camera never rotates, so there's nothing for
+    // mouse-look to do here anyway.
+    if (document.pointerLockElement===canvas) document.exitPointerLock();
+    tacticalMouseNDC = {x:0,y:0};
+  } else {
+    tacticalFogPainting = false;
+  }
+  document.getElementById('lock-prompt').classList.toggle('vis', !isLocked && !tacticalView);
 });
 
 function renderVolPanel() {
@@ -6120,6 +6208,14 @@ document.getElementById('fog-reveal-all-btn').addEventListener('click', ()=>{
 document.getElementById('fog-cover-all-btn').addEventListener('click', ()=>{
   resetFog();
   broadcastToken({type:'fogCoverAll'}, true);
+});
+const fogBrushSlider=document.getElementById('fog-brush-slider'), fogBrushVal=document.getElementById('fog-brush-val');
+fogBrushSlider.value = String(Math.round(fogBrushRadius/FOG_BRUSH_RADIUS_DEFAULT*100));
+fogBrushVal.textContent = fogBrushSlider.value+'%';
+fogBrushSlider.addEventListener('input', ()=>{
+  fogBrushRadius = FOG_BRUSH_RADIUS_DEFAULT * (fogBrushSlider.value/100);
+  fogBrushVal.textContent = fogBrushSlider.value+'%';
+  try{ localStorage.setItem(FOG_BRUSH_KEY, String(fogBrushRadius)); }catch(e){}
 });
 
 document.getElementById('map-recent-rm-toggle').addEventListener('click', ()=>{
