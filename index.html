@@ -182,7 +182,13 @@ body.locked #crosshair{opacity:1}
 /* LOCK PROMPT */
 #lock-prompt{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;opacity:0;pointer-events:none;transition:opacity .4s}
 #lock-prompt.vis{opacity:1;}
-.lp{text-align:center;background:rgba(2,4,14,.92);border:1px solid rgba(224,184,76,.35);padding:36px 50px;pointer-events:auto;cursor:pointer}
+/* .lp only intercepts clicks while actually shown (.vis) — otherwise it sat
+   centered on screen with pointer-events:auto regardless of its own
+   opacity, so a click on the map during tactical view (dead center, right
+   where this prompt lives) silently re-locked the pointer instead of
+   reaching the canvas underneath. */
+.lp{text-align:center;background:rgba(2,4,14,.92);border:1px solid rgba(224,184,76,.35);padding:36px 50px;pointer-events:none;cursor:pointer}
+#lock-prompt.vis .lp{pointer-events:auto}
 .lp:hover{box-shadow:0 0 20px rgba(224,184,76,.25)}
 .lp h2{font-family:var(--fd);font-size:18px;letter-spacing:4px;color:var(--c);text-shadow:0 0 20px var(--c);margin-bottom:10px}
 .lp p{font-size:11px;letter-spacing:2px;color:rgba(224,184,76,.5);line-height:1.9;text-transform:uppercase}
@@ -1653,8 +1659,12 @@ document.addEventListener('keydown', e => {
   // Tactical view hotkey. Tab was the first choice but browsers/OSes tend
   // to reserve it for accessibility focus-cycling even during pointer lock
   // and preventDefault() doesn't reliably stop that, so it never actually
-  // fired — T works normally.
-  if (e.code === 'KeyT' && isLocked) {
+  // fired — T works normally. Entering tactical view exits pointer lock
+  // (so the mouse is free to click tokens/fog on the table), which means
+  // isLocked is false the whole time it's active — so T also has to work
+  // while tacticalView is already on, or there'd be no way to press it
+  // again to leave.
+  if (e.code === 'KeyT' && (isLocked || tacticalView)) {
     document.getElementById('btn-tactical').click();
   }
   // Whisper hotkey — player-only, mirrors the button being hidden for the DM.
