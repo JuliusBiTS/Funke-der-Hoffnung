@@ -4772,7 +4772,18 @@ function updateNoiseGate() {
   const rms = Math.sqrt(sumSq/buf.length);
   gateLevelDb = rms>0 ? 20*Math.log10(rms) : -100;
 
-  if (!noiseGateEnabled) {
+  // Mute (manual or DM force-mute) is enforced here directly, not by
+  // relying on localAudio.setEnabled() to silence the signal upstream —
+  // gatedMicTrack is published instead of localAudio, and whether a
+  // disabled source track's silence actually propagates through an
+  // already-connected MediaStreamAudioSourceNode is inconsistent enough
+  // across browsers that it can't be trusted as the real mute mechanism.
+  // Tying it to these two booleans directly means mute/unmute is correct
+  // regardless of what the upstream track does.
+  if (micMuted || forceMuted) {
+    gateGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.03);
+    gateOpen = false;
+  } else if (!noiseGateEnabled) {
     gateGain.gain.setTargetAtTime(1, audioCtx.currentTime, 0.05);
     gateOpen = true;
   } else {
@@ -5557,6 +5568,13 @@ async function initAgora(appId, room, myName, asDM, token) {
       // nobody else knows this client's own name) re-announces itself
       // whenever it notices someone new.
       sendName(myName, asDM);
+      // Same gap as the name re-announce above, but for whispering: if I'm
+      // currently mid-whisper when someone new joins (or reconnects), they
+      // never received the original 'whisper' broadcast that told everyone
+      // else to mute me — without this, they'd hear me at full volume
+      // despite the whisper, which is exactly the "someone else heard it
+      // too" bug this re-announce closes.
+      if (whisperTarget) broadcastWhisper(true, whisperTarget);
       if (isDM) {
         if (currentMapUrl) broadcastMap(currentMapUrl);
         Object.entries(tokens).forEach(([id,t])=>{
