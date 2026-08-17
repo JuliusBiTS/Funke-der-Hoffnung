@@ -1524,6 +1524,21 @@ let musicVolume = parseFloat(localStorage.getItem(MUSIC_VOLUME_KEY));
 if (isNaN(musicVolume)) musicVolume = 1;
 let musicVolumeGain = null;
 
+// Per-person volume, keyed by their entered name rather than their uid —
+// uid is freshly randomized on every join (see localUID below), so it can
+// never identify "the same player" across a reconnect or the next session,
+// same reasoning as the jump-room leaderboard. Purely local/personal (never
+// broadcast): this is one listener's own preference for how loud someone
+// else sounds to them, not a shared setting.
+const USER_VOLUMES_KEY = 'fantasyRoomUserVolumes';
+let savedUserVolumes = {};
+try { savedUserVolumes = JSON.parse(localStorage.getItem(USER_VOLUMES_KEY)) || {}; } catch(e) {}
+function saveUserVolume(name, vol) {
+  if (!name) return;
+  savedUserVolumes[name.trim().toLowerCase()] = vol;
+  try { localStorage.setItem(USER_VOLUMES_KEY, JSON.stringify(savedUserVolumes)); } catch(e) {}
+}
+
 // ══════════ POINTER LOCK ══════════
 const canvas = document.getElementById('c');
 
@@ -3573,6 +3588,66 @@ function setBattleMap(url) {
   });
 }
 
+// ══════════ ROOM STATE PERSISTENCE (DM-only, per room code) ══════════
+// Map, tokens, fog and the current mood only ever lived in memory — every
+// DM reload (a new Agora token, a pushed patch, just refreshing the page)
+// meant starting the table from scratch and everyone re-setting up by
+// hand. Snapshotted here to localStorage, keyed by room code rather than
+// by the Agora app-id/token (exactly what tends to change between
+// reloads), so the same room picks back up where it left off. DM-only,
+// since the DM is already the sole source of truth for this state — see
+// the resync-to-newcomers block inside 'user-published' below. Restoring
+// it here just means that resync has something real to send instead of
+// starting blank; nothing about how it's sent changes at all.
+const ROOM_STATE_PREFIX = 'fantasyRoomState_';
+function roomStateKey(room) { return ROOM_STATE_PREFIX + room.trim().toLowerCase(); }
+
+function saveRoomState() {
+  if (!isDM || !joinedRoom) return;
+  const snapshot = {
+    mapUrl: currentMapUrl,
+    ambiance: currentAmbianceName,
+    fogFullyRevealed,
+    fogReveals: fogReveals.slice(),
+    tokens: Object.entries(tokens).map(([id,t])=>(
+      {id, url:t.url, u:t.u, v:t.v, category:t.category, size:t.size, label:t.label}
+    )),
+  };
+  try { localStorage.setItem(roomStateKey(joinedRoom), JSON.stringify(snapshot)); } catch(e) {}
+}
+
+// Used by the "Karte entfernen" button as a clean "start fresh" path —
+// wipes the whole saved snapshot, not just the map field within it.
+function clearRoomState(room) {
+  if (!room) return;
+  try { localStorage.removeItem(roomStateKey(room)); } catch(e) {}
+}
+
+// Called once, right after initScene() and before initAgora() in the join
+// handler — so by the time anyone could possibly join, the DM's own state
+// already matches last session's.
+function restoreRoomState(room) {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(roomStateKey(room))); } catch(e) { return; }
+  if (!saved) return;
+  if (saved.mapUrl) {
+    setBattleMap(saved.mapUrl); // also resets fog — must happen before the fog restore below
+    if (saved.fogFullyRevealed) {
+      fogRevealAllLocal();
+    } else if (Array.isArray(saved.fogReveals)) {
+      saved.fogReveals.forEach(d => fogRevealAt(d.u, d.v, d.r));
+      fogReveals.push(...saved.fogReveals);
+    }
+  }
+  if (Array.isArray(saved.tokens)) {
+    saved.tokens.forEach(t => addToken(t.id, t.url, t.u, t.v, t.category, t.size, false, t.label));
+  }
+  if (saved.ambiance) setAmbiance(saved.ambiance, {broadcast:false});
+}
+
+setInterval(saveRoomState, 5000);
+window.addEventListener('beforeunload', saveRoomState);
+
 async function uploadImage(file) {
   const fd = new FormData();
   fd.append('file', file);
@@ -4872,6 +4947,21 @@ function setUserVolume(uid, vol) {
   if (u.volGain && audioCtx) u.volGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.05);
 }
 
+// Applies a previously-saved-by-name volume for uid, if there is one and
+// it hasn't already been applied — called from wherever a uid's name
+// becomes known, since that can arrive before OR after their audio graph
+// exists (see wireSpatial's own users[uid].volume ?? 1 fallback, which
+// picks this up for free if the graph hasn't been built yet).
+function applySavedUserVolume(uid, name) {
+  if (!name) return;
+  const saved = savedUserVolumes[name.trim().toLowerCase()];
+  if (saved === undefined) return;
+  const u = users[uid];
+  if (!u) return;
+  if (u.volGain) setUserVolume(uid, saved);
+  else u.volume = saved;
+}
+
 // Called on every client when `fromUid` starts whispering to `toUid`. What
 // happens locally depends entirely on who's listening:
 //  - the target hears fromUid at full volume, bypassing spatial distance
@@ -5523,6 +5613,7 @@ async function initAgora(appId, room, myName, asDM, token) {
         grp,vidMesh,whisperIcon,targetX:px,targetZ:pz,targetY:py,targetYaw:pyaw};
       delete pendingPos[uid];
       delete pendingName[uid];
+      if (pname?.name) applySavedUserVolume(uid, pname.name);
       // Same latecomer gap as map/tokens/fog/ball below, but for names: this
       // client's own sendName() call only ever fired once, right after it
       // first joined, so anyone who joins later never received it and is
@@ -5697,6 +5788,7 @@ async function initAgora(appId, room, myName, asDM, token) {
         if(users[uid]){
           users[uid].name=msg.name;
           users[uid].isDM=!!msg.isDM; // needed so the whisper target list can exclude the DM
+          applySavedUserVolume(uid, msg.name);
         } else {
           // This peer's media subscription hasn't finished yet — buffer it,
           // same as pendingPos, instead of just dropping it on the floor.
@@ -5925,6 +6017,7 @@ document.getElementById('join-btn').addEventListener('click', async()=>{
     document.getElementById('join-overlay').style.display='none';
     initScene();
     ensureACtx();
+    if (isDM) restoreRoomState(room);
     await initAgora(appId,room,name,isDM,token);
     document.getElementById('hud').style.display='flex';
     document.getElementById('ctrl').style.display='flex';
@@ -6149,6 +6242,7 @@ function renderVolPanel() {
     slider.addEventListener('input', ()=>{
       setUserVolume(uid, slider.value/100);
       pctSpan.textContent = slider.value + '%';
+      saveUserVolume(u.name, slider.value/100);
     });
     row.appendChild(label); row.appendChild(slider);
     list.appendChild(row);
@@ -6346,6 +6440,7 @@ document.getElementById('map-file').addEventListener('change', async(e)=>{
 document.getElementById('map-clear-btn').addEventListener('click', async()=>{
   setBattleMap(null);
   await broadcastMap(null);
+  clearRoomState(joinedRoom);
   document.getElementById('map-stat').textContent='Keine Karte aktiv';
   document.getElementById('map-stat').className='mstat';
   document.getElementById('map-clear-btn').style.display='none';
